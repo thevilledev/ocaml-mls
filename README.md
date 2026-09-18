@@ -34,6 +34,11 @@ Suites 0x0004 and 0x0006 need X448 and Ed448, which neither `hpke` nor
 `mirage-crypto-ec` provide. Messages naming them still parse; `Crypto.create`
 returns `Unsupported_cipher_suite` for them.
 
+Support for these two suites is waiting for Curve448 primitives to become
+available in opam. The `curve448` package has been submitted in
+[ocaml/opam-repository#30768](https://github.com/ocaml/opam-repository/pull/30768);
+once it is published, the suites can be enabled here and in `hpke`.
+
 ## Features
 
 - Group creation, joining via Welcome, and joining via external Commit.
