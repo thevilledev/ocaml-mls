@@ -1,26 +1,17 @@
-(* Cryptographic operations for a cipher suite (RFC 9420 Section 5.1). Hashing
-   and HMAC come from digestif, HKDF from kdf, AEADs and signature algorithms
-   from mirage-crypto, and HPKE from the hpke package. *)
+(* Cryptographic operations for a cipher suite (RFC 9420 Section 5.1). The
+   suite's KEM, KDF and AEAD come from the hpke package, hashing and HMAC from
+   digestif, and signatures from mirage-crypto-ec. *)
 
 let ( let* ) = Result.bind
 
 module type HASH = sig
-  val size : int
   val digest : string -> string
   val hmac : key:string -> string -> string
-  val extract : ?salt:string -> string -> string
-  val expand : prk:string -> ?info:string -> int -> string
 end
 
 module Make_hash (H : Digestif.S) : HASH = struct
-  let size = H.digest_size
   let digest s = H.to_raw_string (H.digest_string s)
   let hmac ~key s = H.to_raw_string (H.hmac_string ~key s)
-
-  module K = Hkdf.Make (H)
-
-  let extract = K.extract
-  let expand = K.expand
 end
 
 module Sha256 = Make_hash (Digestif.SHA256)
@@ -54,10 +45,8 @@ let create_exn suite =
 
 let suite t = t.suite
 let kem t = t.params.kem
-
-let hash_size t =
-  let module H = (val t.hash) in
-  H.size
+let hpke_error = function Ok v -> Ok v | Error e -> Error (Error.Hpke e)
+let hash_size t = Hpke.Kdf.hash_size t.params.kdf
 
 let hash t s =
   let module H = (val t.hash) in
@@ -68,14 +57,10 @@ let mac t ~key data =
   H.hmac ~key data
 
 let random ~rng n = Mirage_crypto_rng.generate ~g:rng n
-
-let hkdf_extract t ~salt ~ikm =
-  let module H = (val t.hash) in
-  H.extract ~salt ikm
+let hkdf_extract t ~salt ~ikm = Hpke.Kdf.extract t.params.kdf ~salt ikm
 
 let hkdf_expand t ~prk ~info length =
-  let module H = (val t.hash) in
-  H.expand ~prk ~info length
+  hpke_error (Hpke.Kdf.expand t.params.kdf ~prk ~info length)
 
 let zeros t = String.make (hash_size t) '\x00'
 let label_prefix = "MLS 1.0 "
@@ -86,9 +71,15 @@ let encode_kdf_label e (length, label, context) =
   Tls.Encoder.opaque e (label_prefix ^ label);
   Tls.Encoder.opaque e context
 
+(* The length is checked before it is encoded as a uint16 in the label. *)
 let expand_with_label t ~secret ~label ~context length =
-  let info = Tls.encode encode_kdf_label (length, label, context) in
-  hkdf_expand t ~prk:secret ~info length
+  if length < 0 || length > 255 * hash_size t then
+    Error
+      (Error.Hpke
+         (Hpke.Error.Invalid_length "the output length is out of range"))
+  else
+    let info = Tls.encode encode_kdf_label (length, label, context) in
+    hkdf_expand t ~prk:secret ~info length
 
 let derive_secret t ~secret ~label =
   expand_with_label t ~secret ~label ~context:"" (hash_size t)
@@ -110,43 +101,23 @@ let key_package_ref t value =
 
 let proposal_ref t value = ref_hash t ~label:"MLS 1.0 Proposal Reference" ~value
 
-(* AEAD *)
+(* AEAD, through the suite's HPKE AEAD. *)
 
-let aead_key_size t =
-  match t.params.aead with
-  | Hpke.Aead.Aes_128_gcm -> 16
-  | Hpke.Aead.Aes_256_gcm | Hpke.Aead.Chacha20_poly1305 -> 32
-
-let aead_nonce_size _t = 12
+let aead_key_size t = Hpke.Aead.key_size t.params.aead
+let aead_nonce_size t = Hpke.Aead.nonce_size t.params.aead
 
 let aead_seal t ~key ~nonce ~aad plaintext =
-  match t.params.aead with
-  | Hpke.Aead.Aes_128_gcm | Hpke.Aead.Aes_256_gcm ->
-      let key = Mirage_crypto.AES.GCM.of_secret key in
-      Mirage_crypto.AES.GCM.authenticate_encrypt ~key ~nonce ~adata:aad
-        plaintext
-  | Hpke.Aead.Chacha20_poly1305 ->
-      let key = Mirage_crypto.Chacha20.of_secret key in
-      Mirage_crypto.Chacha20.authenticate_encrypt ~key ~nonce ~adata:aad
-        plaintext
+  let* key = hpke_error (Hpke.Aead.key t.params.aead key) in
+  hpke_error (Hpke.Aead.seal key ~nonce ~aad ~plaintext)
 
 let aead_open t ~key ~nonce ~aad ciphertext =
-  let result =
-    match t.params.aead with
-    | Hpke.Aead.Aes_128_gcm | Hpke.Aead.Aes_256_gcm ->
-        let key = Mirage_crypto.AES.GCM.of_secret key in
-        Mirage_crypto.AES.GCM.authenticate_decrypt ~key ~nonce ~adata:aad
-          ciphertext
-    | Hpke.Aead.Chacha20_poly1305 ->
-        let key = Mirage_crypto.Chacha20.of_secret key in
-        Mirage_crypto.Chacha20.authenticate_decrypt ~key ~nonce ~adata:aad
-          ciphertext
-  in
-  match result with Some pt -> Ok pt | None -> Error Error.Aead_failure
+  let* key = hpke_error (Hpke.Aead.key t.params.aead key) in
+  match Hpke.Aead.open_ key ~nonce ~aad ~ciphertext with
+  | Ok plaintext -> Ok plaintext
+  | Error Hpke.Error.Open_error -> Error Error.Aead_failure
+  | Error e -> Error (Error.Hpke e)
 
 (* HPKE *)
-
-let hpke_error = function Ok v -> Ok v | Error e -> Error (Error.Hpke e)
 
 let hpke_public_key t bytes =
   hpke_error (Hpke.Public_key.of_bytes ~kem:t.params.kem bytes)

@@ -2,6 +2,8 @@
    every operation returns the updated tree. Node secrets are derived lazily and
    deleted once their children or ratchets exist. *)
 
+let ( let* ) = Result.bind
+
 module Int_map = Map.Make (Int)
 
 module Skipped_key = struct
@@ -44,63 +46,63 @@ let create crypto ~n_leaves ~encryption_secret =
 let n_leaves t = t.n_leaves
 
 let rec expand_to t node =
-  if Int_map.mem node t.nodes then t
+  if Int_map.mem node t.nodes then Ok t
   else
     let parent = Tree_math.parent node t.n_leaves in
-    let t = expand_to t parent in
-    let ps = Int_map.find parent t.nodes in
-    let nh = Crypto.hash_size t.crypto in
+    let* t = expand_to t parent in
+    let secret = Int_map.find parent t.nodes in
     let derive context =
-      Crypto.expand_with_label t.crypto ~secret:ps ~label:"tree" ~context nh
+      Crypto.expand_with_label t.crypto ~secret ~label:"tree" ~context
+        (Crypto.hash_size t.crypto)
     in
+    let* left = derive "left" in
+    let* right = derive "right" in
     let nodes =
       t.nodes |> Int_map.remove parent
-      |> Int_map.add (Tree_math.left parent) (derive "left")
-      |> Int_map.add (Tree_math.right parent) (derive "right")
+      |> Int_map.add (Tree_math.left parent) left
+      |> Int_map.add (Tree_math.right parent) right
     in
-    { t with nodes }
+    Ok { t with nodes }
 
 let init_leaf t leaf =
-  if Int_map.mem leaf t.handshake then t
+  if Int_map.mem leaf t.handshake then Ok t
   else
     let node = Tree_math.node_of_leaf leaf in
-    let t = expand_to t node in
+    let* t = expand_to t node in
     let secret = Int_map.find node t.nodes in
-    let nh = Crypto.hash_size t.crypto in
     let derive label =
-      {
-        secret = Crypto.expand_with_label t.crypto ~secret ~label ~context:"" nh;
-        generation = 0;
-      }
+      let* secret =
+        Crypto.expand_with_label t.crypto ~secret ~label ~context:""
+          (Crypto.hash_size t.crypto)
+      in
+      Ok { secret; generation = 0 }
     in
-    {
-      t with
-      nodes = Int_map.remove node t.nodes;
-      handshake = Int_map.add leaf (derive "handshake") t.handshake;
-      application = Int_map.add leaf (derive "application") t.application;
-    }
+    let* handshake = derive "handshake" in
+    let* application = derive "application" in
+    Ok
+      {
+        t with
+        nodes = Int_map.remove node t.nodes;
+        handshake = Int_map.add leaf handshake t.handshake;
+        application = Int_map.add leaf application t.application;
+      }
 
 let ratchet_key_nonce t r =
-  let key =
-    Crypto.derive_tree_secret t.crypto ~secret:r.secret ~label:"key"
-      ~generation:r.generation
-      (Crypto.aead_key_size t.crypto)
+  let derive label length =
+    Crypto.derive_tree_secret t.crypto ~secret:r.secret ~label
+      ~generation:r.generation length
   in
-  let nonce =
-    Crypto.derive_tree_secret t.crypto ~secret:r.secret ~label:"nonce"
-      ~generation:r.generation
-      (Crypto.aead_nonce_size t.crypto)
-  in
-  (key, nonce)
+  let* key = derive "key" (Crypto.aead_key_size t.crypto) in
+  let* nonce = derive "nonce" (Crypto.aead_nonce_size t.crypto) in
+  Ok (key, nonce)
 
 let advance t r =
-  {
-    secret =
-      Crypto.derive_tree_secret t.crypto ~secret:r.secret ~label:"secret"
-        ~generation:r.generation
-        (Crypto.hash_size t.crypto);
-    generation = r.generation + 1;
-  }
+  let* secret =
+    Crypto.derive_tree_secret t.crypto ~secret:r.secret ~label:"secret"
+      ~generation:r.generation
+      (Crypto.hash_size t.crypto)
+  in
+  Ok { secret; generation = r.generation + 1 }
 
 let get_ratchet t leaf ct =
   match ct with
@@ -120,54 +122,44 @@ let check_leaf t leaf =
 
 (* Next key for sending from [leaf]. *)
 let next_key t ~leaf ct =
-  match check_leaf t leaf with
-  | Error e -> Error e
-  | Ok () ->
-      let t = init_leaf t leaf in
-      let r = get_ratchet t leaf ct in
-      if r.generation >= max_generation then Error Error.Ratchet_exhausted
-      else
-        let key, nonce = ratchet_key_nonce t r in
-        let t = set_ratchet t leaf ct (advance t r) in
-        Ok ((key, nonce, r.generation), t)
+  let* () = check_leaf t leaf in
+  let* t = init_leaf t leaf in
+  let r = get_ratchet t leaf ct in
+  if r.generation >= max_generation then Error Error.Ratchet_exhausted
+  else
+    let* key, nonce = ratchet_key_nonce t r in
+    let* next = advance t r in
+    Ok ((key, nonce, r.generation), set_ratchet t leaf ct next)
 
 (* Key for receiving a message from [leaf] at [generation]. Keys for skipped
    generations are retained (bounded) so that reordered messages can still be
    decrypted; each key can be obtained only once. *)
 let key_for t ~leaf ct ~generation =
-  match check_leaf t leaf with
-  | Error e -> Error e
-  | Ok () ->
-      let t = init_leaf t leaf in
-      let r = get_ratchet t leaf ct in
-      let sk = (leaf, content_type_index ct, generation) in
-      if generation < r.generation then
-        match Skipped_map.find_opt sk t.skipped with
-        | Some kn ->
-            Ok (kn, { t with skipped = Skipped_map.remove sk t.skipped })
-        | None -> Error (Error.Generation_out_of_range generation)
-      else if generation - r.generation > max_forward_distance then
-        Error (Error.Generation_out_of_range generation)
-      else if
-        Skipped_map.cardinal t.skipped + (generation - r.generation)
-        > max_skipped_keys
-      then Error (Error.Generation_out_of_range generation)
+  let* () = check_leaf t leaf in
+  let* t = init_leaf t leaf in
+  let r = get_ratchet t leaf ct in
+  let sk = (leaf, content_type_index ct, generation) in
+  if generation < r.generation then
+    match Skipped_map.find_opt sk t.skipped with
+    | Some kn -> Ok (kn, { t with skipped = Skipped_map.remove sk t.skipped })
+    | None -> Error (Error.Generation_out_of_range generation)
+  else if generation - r.generation > max_forward_distance then
+    Error (Error.Generation_out_of_range generation)
+  else if
+    Skipped_map.cardinal t.skipped + (generation - r.generation)
+    > max_skipped_keys
+  then Error (Error.Generation_out_of_range generation)
+  else
+    let rec go t r =
+      let* kn = ratchet_key_nonce t r in
+      let* next = advance t r in
+      if r.generation = generation then Ok (kn, set_ratchet t leaf ct next)
       else
-        let rec go t r =
-          if r.generation = generation then
-            let kn = ratchet_key_nonce t r in
-            Ok (kn, set_ratchet t leaf ct (advance t r))
-          else
-            let kn = ratchet_key_nonce t r in
-            let t =
-              {
-                t with
-                skipped =
-                  Skipped_map.add
-                    (leaf, content_type_index ct, r.generation)
-                    kn t.skipped;
-              }
-            in
-            go t (advance t r)
+        let skipped =
+          Skipped_map.add
+            (leaf, content_type_index ct, r.generation)
+            kn t.skipped
         in
-        go t r
+        go { t with skipped } next
+    in
+    go t r

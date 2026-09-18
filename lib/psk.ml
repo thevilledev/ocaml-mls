@@ -58,16 +58,18 @@ let psk_secret c psks =
   let nh = Crypto.hash_size c in
   let zero = Crypto.zeros c in
   let count = List.length psks in
-  let secret, _ =
-    List.fold_left
-      (fun (acc, index) (id, psk) ->
+  let rec go acc index = function
+    | [] -> Ok acc
+    | (id, psk) :: rest -> (
         let psk_extracted = Crypto.hkdf_extract c ~salt:zero ~ikm:psk in
         let label = Tls.encode encode_label (id, index, count) in
-        let psk_input =
+        match
           Crypto.expand_with_label c ~secret:psk_extracted ~label:"derived psk"
             ~context:label nh
-        in
-        (Crypto.hkdf_extract c ~salt:psk_input ~ikm:acc, index + 1))
-      (zero, 0) psks
+        with
+        | Error e -> Error e
+        | Ok psk_input ->
+            go (Crypto.hkdf_extract c ~salt:psk_input ~ikm:acc) (index + 1) rest
+        )
   in
-  secret
+  go zero 0 psks

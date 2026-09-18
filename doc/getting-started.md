@@ -22,6 +22,15 @@ cd ocaml-mls
 opam install .
 ```
 
+`mls` needs `hpke` 0.2.0, which is released but not yet in the opam
+repository. The checkout's `mls.opam` carries a `pin-depends` entry, so opam
+offers to pin `hpke` to its `v0.2.0` tag during this install. To pin it
+yourself, for example for another project:
+
+```sh
+opam pin add hpke.0.2.0 "git+https://github.com/thevilledev/ocaml-hpke.git#v0.2.0"
+```
+
 If you only want to build and run examples in the checkout, use
 `opam install . --deps-only` instead. For test and documentation dependencies,
 follow the [development setup](development.md#setup).

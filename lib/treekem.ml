@@ -63,7 +63,7 @@ end
 let next_path_secret c secret = Crypto.derive_secret c ~secret ~label:"path"
 
 let node_key_pair c ~path_secret =
-  let node_secret = Crypto.derive_secret c ~secret:path_secret ~label:"node" in
+  let* node_secret = Crypto.derive_secret c ~secret:path_secret ~label:"node" in
   Crypto.derive_key_pair c ~ikm:node_secret
 
 (* Derive path secrets and key pairs along [nodes] (a suffix of a filtered
@@ -75,7 +75,8 @@ let derive_path c ~nodes ~path_secret =
     | [] -> Ok (List.rev acc, secret)
     | n :: rest ->
         let* priv, pub = node_key_pair c ~path_secret:secret in
-        go (next_path_secret c secret) ((n, secret, priv, pub) :: acc) rest
+        let* next = next_path_secret c secret in
+        go next ((n, secret, priv, pub) :: acc) rest
   in
   match nodes with [] -> Ok ([], path_secret) | _ -> go path_secret [] nodes
 

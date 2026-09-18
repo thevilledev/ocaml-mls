@@ -2,7 +2,8 @@
 
 [mls] implements the Messaging Layer Security protocol
 ({{:https://www.rfc-editor.org/rfc/rfc9420.html}RFC 9420}) in OCaml, building
-on the [hpke] package for RFC 9180 operations.
+on the [hpke] package for RFC 9180 operations and for each cipher suite's KDF
+and AEAD.
 
 The library is unaudited and not production-ready. It is intended for
 interoperability review.

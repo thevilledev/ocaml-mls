@@ -24,3 +24,4 @@ let check_bytes name expected actual =
 
 let opt_int json = match json with `Null -> None | v -> Some (to_int v)
 let opt_hex json = match json with `Null -> None | v -> Some (hex v)
+let ok = function Ok v -> v | Error e -> Alcotest.fail (Mls.Error.to_string e)

@@ -293,7 +293,7 @@ let create ?(extensions = []) c ~rng ~group_id ~signature_key ~leaf_node
     }
   in
   let epoch_secret = Crypto.random ~rng (Crypto.hash_size c) in
-  let secrets = Key_schedule.from_epoch_secret c ~epoch_secret in
+  let* secrets = Key_schedule.from_epoch_secret c ~epoch_secret in
   let confirmation_tag =
     Key_schedule.confirmation_tag c
       ~confirmation_key:secrets.Key_schedule.confirmation_key
@@ -374,12 +374,12 @@ let join ?(psks = no_external_psks) ?tree c ~(key_package : Key_package.t)
     resolve_psks ~lookup:psks ~group_id:"" ~current_epoch:(-1L) ~current_psk:""
       ~history:Int64_map.empty gs.Welcome.Group_secrets.psks
   in
-  let psk_secret = Psk.psk_secret c psk_pairs in
+  let* psk_secret = Psk.psk_secret c psk_pairs in
   let joiner_secret = gs.Welcome.Group_secrets.joiner_secret in
-  let welcome_secret =
+  let* welcome_secret =
     Key_schedule.welcome_secret c ~joiner_secret ~psk_secret
   in
-  let key, nonce = Key_schedule.welcome_key_nonce c ~welcome_secret in
+  let* key, nonce = Key_schedule.welcome_key_nonce c ~welcome_secret in
   let* gi_bytes =
     Crypto.aead_open c ~key ~nonce ~aad:"" welcome.Welcome.encrypted_group_info
   in
@@ -464,7 +464,7 @@ let join ?(psks = no_external_psks) ?tree c ~(key_package : Key_package.t)
   in
   let* () = Treekem.Private.check_consistency priv tree in
   let context_bytes = Group_context.to_bytes context in
-  let secrets =
+  let* secrets =
     Key_schedule.from_joiner_secret c ~joiner_secret ~psk_secret
       ~group_context:context_bytes
   in
@@ -848,7 +848,7 @@ let advance_epoch ~psks (t : t) ~(ac : Authenticated_content.t) ~tree ~priv
     resolve_psks ~lookup:psks ~group_id:(group_id t) ~current_epoch:(epoch t)
       ~current_psk:(resumption_psk t) ~history:t.resumption_psks psk_ids
   in
-  let psk_secret = Psk.psk_secret c psk_pairs in
+  let* psk_secret = Psk.psk_secret c psk_pairs in
   let* init_secret =
     match external_init with
     | None -> Ok t.secrets.Key_schedule.init_secret
@@ -856,7 +856,7 @@ let advance_epoch ~psks (t : t) ~(ac : Authenticated_content.t) ~tree ~priv
         external_init_secret c
           ~external_secret:t.secrets.Key_schedule.external_secret ~kem_output
   in
-  let secrets =
+  let* secrets =
     Key_schedule.derive c ~init_secret ~commit_secret ~psk_secret
       ~group_context:context_bytes
   in
@@ -1280,8 +1280,8 @@ type commit_result = {
 
 let make_welcome (t : t) ~rng ~group_info ~added ~psk_ids =
   let c = t.crypto in
-  let encrypted_group_info =
-    let key, nonce =
+  let* encrypted_group_info =
+    let* key, nonce =
       Key_schedule.welcome_key_nonce c
         ~welcome_secret:t.secrets.Key_schedule.welcome_secret
     in
@@ -1601,8 +1601,8 @@ let external_join ?(psks = no_external_psks) ?(authenticated_data = "") ?tree
     resolve_psks ~lookup:psks ~group_id:"" ~current_epoch:(-1L) ~current_psk:""
       ~history:Int64_map.empty psk_ids
   in
-  let psk_secret = Psk.psk_secret c psk_pairs in
-  let secrets =
+  let* psk_secret = Psk.psk_secret c psk_pairs in
+  let* secrets =
     Key_schedule.derive c ~init_secret ~commit_secret:r.Treekem.commit_secret
       ~psk_secret
       ~group_context:(Group_context.to_bytes new_context)

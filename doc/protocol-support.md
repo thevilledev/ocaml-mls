@@ -47,11 +47,16 @@ packaging work is tracked in
 
 The library delegates cryptographic primitives to:
 
-- [`hpke`](https://github.com/thevilledev/ocaml-hpke) for RFC 9180 HPKE.
-- [`mirage-crypto`](https://github.com/mirage/mirage-crypto) for AEADs,
-  signatures, and random-number generation.
+- [`hpke`](https://github.com/thevilledev/ocaml-hpke) 0.2.0 or later for
+  RFC 9180 HPKE and for each cipher suite's HKDF and AEAD, through the
+  primitives it exports for protocols layered on HPKE.
+- [`mirage-crypto`](https://github.com/mirage/mirage-crypto) for signatures
+  (`mirage-crypto-ec`) and random-number generation (`mirage-crypto-rng`).
 - [`digestif`](https://github.com/mirage/digestif) for hashes and HMAC.
-- [`kdf`](https://github.com/robur-coop/kdf) for HKDF.
+
+Key derivation and AEAD operations return errors, not exceptions, for secrets
+shorter than the hash output, out-of-range output lengths, and wrong-sized
+keys or nonces.
 
 ## Application responsibilities and gaps
 

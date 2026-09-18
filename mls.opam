@@ -4,8 +4,8 @@ description: """
 An implementation of the Messaging Layer Security protocol (RFC 9420): the
 TLS presentation-language codec, ratchet tree and TreeKEM, key schedule and
 secret tree, message framing and protection, and the group state machine.
-Cryptographic primitives are delegated to the hpke, mirage-crypto, digestif,
-and kdf packages.
+The cipher suite's KEM, KDF and AEAD come from the hpke package, signatures
+from mirage-crypto-ec, and hashing from digestif.
 """
 maintainer: ["Ville Vesilehto <ville@vesilehto.fi>"]
 authors: ["Ville Vesilehto <ville@vesilehto.fi>"]
@@ -20,11 +20,9 @@ x-maintenance-intent: ["(latest)"]
 depends: [
   "ocaml" {>= "4.14"}
   "dune" {>= "3.12"}
-  "hpke" {>= "0.1.1"}
-  "mirage-crypto" {>= "2.4.0"}
+  "hpke" {>= "0.2.0"}
   "mirage-crypto-ec" {>= "2.4.0"}
   "mirage-crypto-rng" {>= "2.4.0"}
-  "kdf" {>= "1.1.0"}
   "digestif" {>= "1.3.1"}
   "eqaf" {>= "0.10"}
   "alcotest" {with-test & >= "1.7.0"}
@@ -33,6 +31,11 @@ depends: [
   "yojson" {with-test & >= "2.0.0"}
   "odoc" {with-doc}
   "ocamlformat" {with-dev-setup & = "0.29.0"}
+]
+# hpke 0.2.0 is released but not yet in opam-repository. Remove this field
+# before submitting mls there, since the repository rejects pin-depends.
+pin-depends: [
+  ["hpke.0.2.0" "git+https://github.com/thevilledev/ocaml-hpke.git#v0.2.0"]
 ]
 build: [
   ["dune" "subst"] {dev}

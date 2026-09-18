@@ -142,7 +142,7 @@ let protect_private c ~rng ~secret_tree ~sender_data_secret ~padding
       Private_message.encode_content ~padding
         (content.Framed_content.content, ac.Authenticated_content.auth)
     in
-    let ciphertext =
+    let* ciphertext =
       Crypto.aead_seal c ~key ~nonce
         ~aad:(Private_message.aad pm_header)
         plaintext
@@ -151,10 +151,10 @@ let protect_private c ~rng ~secret_tree ~sender_data_secret ~padding
       Tls.encode Private_message.encode_sender_data
         { Private_message.leaf_index; generation; reuse_guard }
     in
-    let sd_key, sd_nonce =
+    let* sd_key, sd_nonce =
       Key_schedule.sender_data_key_nonce c ~sender_data_secret ~ciphertext
     in
-    let encrypted_sender_data =
+    let* encrypted_sender_data =
       Crypto.aead_seal c ~key:sd_key ~nonce:sd_nonce
         ~aad:(Private_message.sender_data_aad pm_header)
         sender_data
@@ -165,7 +165,7 @@ let protect_private c ~rng ~secret_tree ~sender_data_secret ~padding
 
 let unprotect_private ?own_leaf c ~secret_tree ~sender_data_secret
     (pm : Private_message.t) =
-  let sd_key, sd_nonce =
+  let* sd_key, sd_nonce =
     Key_schedule.sender_data_key_nonce c ~sender_data_secret
       ~ciphertext:pm.Private_message.ciphertext
   in

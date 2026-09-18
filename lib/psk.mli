@@ -19,6 +19,6 @@ val decode_id : Tls.Decoder.t -> id
 val encode_label : Tls.Encoder.t -> id * int * int -> unit
 (** PSKLabel: [(id, index, count)]. *)
 
-val psk_secret : Crypto.t -> (id * string) list -> string
+val psk_secret : Crypto.t -> (id * string) list -> (string, Error.t) result
 (** [psk_secret] from PreSharedKeyIDs paired with their secrets, in proposal
     order. *)

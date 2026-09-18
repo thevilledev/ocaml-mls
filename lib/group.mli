@@ -100,8 +100,10 @@ val confirmation_tag : t -> string
 val signature_key : t -> Crypto.signature_key
 val pending_proposals : t -> (string * (Proposal.t * Framing.Sender.t)) list
 
-val export : t -> label:string -> context:string -> int -> string
-(** [MLS-Exporter] (Section 8.5). *)
+val export :
+  t -> label:string -> context:string -> int -> (string, Error.t) result
+(** [MLS-Exporter] (Section 8.5). Fails when the length exceeds [255 * KDF.Nh].
+*)
 
 (** {1 Receiving} *)
 

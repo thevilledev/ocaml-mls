@@ -1,6 +1,6 @@
-(** Cryptographic operations for one cipher suite (RFC 9420 Section 5.1).
-    Hashing and HMAC come from digestif, HKDF from kdf, AEADs and signature
-    algorithms from mirage-crypto, and HPKE from the hpke package. *)
+(** Cryptographic operations for one cipher suite (RFC 9420 Section 5.1). The
+    suite's KEM, KDF and AEAD come from the hpke package, hashing and HMAC from
+    digestif, and signature algorithms from mirage-crypto-ec. *)
 
 type t
 (** A cipher suite provider. *)
@@ -22,18 +22,33 @@ val hash : t -> string -> string
 val mac : t -> key:string -> string -> string
 val random : rng:Mirage_crypto_rng.g -> int -> string
 val hkdf_extract : t -> salt:string -> ikm:string -> string
-val hkdf_expand : t -> prk:string -> info:string -> int -> string
+
+val hkdf_expand :
+  t -> prk:string -> info:string -> int -> (string, Error.t) result
+(** Fails when [prk] is shorter than {!hash_size} or the length exceeds
+    [255 * hash_size]. *)
 
 val zeros : t -> string
 (** [KDF.Nh] zero bytes. *)
 
 val expand_with_label :
-  t -> secret:string -> label:string -> context:string -> int -> string
+  t ->
+  secret:string ->
+  label:string ->
+  context:string ->
+  int ->
+  (string, Error.t) result
 
-val derive_secret : t -> secret:string -> label:string -> string
+val derive_secret :
+  t -> secret:string -> label:string -> (string, Error.t) result
 
 val derive_tree_secret :
-  t -> secret:string -> label:string -> generation:int -> int -> string
+  t ->
+  secret:string ->
+  label:string ->
+  generation:int ->
+  int ->
+  (string, Error.t) result
 
 val ref_hash : t -> label:string -> value:string -> string
 
@@ -49,7 +64,12 @@ val aead_key_size : t -> int
 val aead_nonce_size : t -> int
 
 val aead_seal :
-  t -> key:string -> nonce:string -> aad:string -> string -> string
+  t ->
+  key:string ->
+  nonce:string ->
+  aad:string ->
+  string ->
+  (string, Error.t) result
 
 val aead_open :
   t ->

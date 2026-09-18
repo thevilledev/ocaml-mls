@@ -43,8 +43,8 @@ let same_epoch what groups =
             (G.context g0).tree_hash (G.context g).tree_hash;
           check_bytes
             (what ^ " exporter " ^ n)
-            (G.export g0 ~label:"test" ~context:"ctx" 32)
-            (G.export g ~label:"test" ~context:"ctx" 32))
+            (ok (G.export g0 ~label:"test" ~context:"ctx" 32))
+            (ok (G.export g ~label:"test" ~context:"ctx" 32)))
         rest
 
 let process what ?psks g msg =
@@ -79,6 +79,7 @@ let scenario suite () =
          ~leaf_key:alice.kp.encryption_key)
   in
   Alcotest.(check int) "creator index" 0 (G.own_index a);
+  expect_error "oversized export" (G.export a ~label:"l" ~context:"" 1_000_000);
   let r =
     get "add commit"
       (G.commit

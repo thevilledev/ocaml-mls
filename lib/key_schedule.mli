@@ -1,4 +1,6 @@
-(** Key schedule (RFC 9420 Section 8). *)
+(** Key schedule (RFC 9420 Section 8). Derivations fail, rather than raise, when
+    a secret is shorter than the hash output or a requested length is out of
+    range. *)
 
 type epoch_secrets = {
   joiner_secret : string;
@@ -20,14 +22,14 @@ val joiner_secret :
   init_secret:string ->
   commit_secret:string ->
   group_context:string ->
-  string
+  (string, Error.t) result
 
 val from_joiner_secret :
   Crypto.t ->
   joiner_secret:string ->
   psk_secret:string ->
   group_context:string ->
-  epoch_secrets
+  (epoch_secrets, Error.t) result
 
 val derive :
   Crypto.t ->
@@ -35,16 +37,21 @@ val derive :
   commit_secret:string ->
   psk_secret:string ->
   group_context:string ->
-  epoch_secrets
+  (epoch_secrets, Error.t) result
 
-val from_epoch_secret : Crypto.t -> epoch_secret:string -> epoch_secrets
+val from_epoch_secret :
+  Crypto.t -> epoch_secret:string -> (epoch_secrets, Error.t) result
 (** Epoch 0 of a new group (Section 11); joiner and welcome secrets are empty.
 *)
 
 val welcome_secret :
-  Crypto.t -> joiner_secret:string -> psk_secret:string -> string
+  Crypto.t ->
+  joiner_secret:string ->
+  psk_secret:string ->
+  (string, Error.t) result
 
-val welcome_key_nonce : Crypto.t -> welcome_secret:string -> string * string
+val welcome_key_nonce :
+  Crypto.t -> welcome_secret:string -> (string * string, Error.t) result
 
 val confirmation_tag :
   Crypto.t ->
@@ -58,7 +65,7 @@ val exporter :
   label:string ->
   context:string ->
   int ->
-  string
+  (string, Error.t) result
 
 val external_key_pair :
   Crypto.t ->
@@ -66,4 +73,7 @@ val external_key_pair :
   (Hpke.Private_key.t * Hpke.Public_key.t, Error.t) result
 
 val sender_data_key_nonce :
-  Crypto.t -> sender_data_secret:string -> ciphertext:string -> string * string
+  Crypto.t ->
+  sender_data_secret:string ->
+  ciphertext:string ->
+  (string * string, Error.t) result

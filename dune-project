@@ -10,5 +10,5 @@
  (name mls)
  (synopsis "Messaging Layer Security (RFC 9420) for OCaml")
  (description
-  "An implementation of the Messaging Layer Security protocol (RFC 9420): TLS presentation-language codec, ratchet tree (TreeKEM), key schedule, message framing and protection, and the group state machine. Cryptographic primitives are delegated to the hpke, mirage-crypto, and digestif packages.")
+  "An implementation of the Messaging Layer Security protocol (RFC 9420): TLS presentation-language codec, ratchet tree (TreeKEM), key schedule, message framing and protection, and the group state machine. The cipher suite's KEM, KDF and AEAD come from the hpke package, signatures from mirage-crypto-ec, and hashing from digestif.")
  (tags (cryptography mls rfc9420 "messaging layer security" "end-to-end encryption")))

@@ -28,21 +28,24 @@ let test_crypto_basics () =
       check_bytes
         (name ^ " expand_with_label")
         (hex_field ewl "out")
-        (Crypto.expand_with_label c ~secret:(hex_field ewl "secret")
-           ~label:(string_field ewl "label") ~context:(hex_field ewl "context")
-           (int_field ewl "length"));
+        (ok
+           (Crypto.expand_with_label c ~secret:(hex_field ewl "secret")
+              ~label:(string_field ewl "label")
+              ~context:(hex_field ewl "context") (int_field ewl "length")));
       let ds = member "derive_secret" v in
       check_bytes (name ^ " derive_secret") (hex_field ds "out")
-        (Crypto.derive_secret c ~secret:(hex_field ds "secret")
-           ~label:(string_field ds "label"));
+        (ok
+           (Crypto.derive_secret c ~secret:(hex_field ds "secret")
+              ~label:(string_field ds "label")));
       let dts = member "derive_tree_secret" v in
       check_bytes
         (name ^ " derive_tree_secret")
         (hex_field dts "out")
-        (Crypto.derive_tree_secret c ~secret:(hex_field dts "secret")
-           ~label:(string_field dts "label")
-           ~generation:(int_field dts "generation")
-           (int_field dts "length"));
+        (ok
+           (Crypto.derive_tree_secret c ~secret:(hex_field dts "secret")
+              ~label:(string_field dts "label")
+              ~generation:(int_field dts "generation")
+              (int_field dts "length")));
       let swl = member "sign_with_label" v in
       let pub = hex_field swl "pub" and label = string_field swl "label" in
       let content = hex_field swl "content" in
@@ -116,8 +119,51 @@ let test_unsupported () =
     "suite 0 unsupported" true
     (Result.is_error (Crypto.create 0))
 
+(* Out-of-range lengths and wrong-sized keys are errors, never exceptions. *)
+let test_total () =
+  let c = Crypto.create_exn 1 in
+  let secret = String.make 32 's' in
+  let is_error r = Result.is_error r in
+  Alcotest.(check bool)
+    "oversized expand" true
+    (is_error
+       (Crypto.expand_with_label c ~secret ~label:"x" ~context:"" 70_000));
+  Alcotest.(check bool)
+    "negative expand" true
+    (is_error (Crypto.expand_with_label c ~secret ~label:"x" ~context:"" (-1)));
+  Alcotest.(check bool)
+    "short secret" true
+    (is_error (Crypto.derive_secret c ~secret:"short" ~label:"x"));
+  Alcotest.(check bool)
+    "maximum expand" true
+    (Result.is_ok
+       (Crypto.expand_with_label c ~secret ~label:"x" ~context:"" (255 * 32)));
+  let nonce = String.make 12 'n' in
+  Alcotest.(check bool)
+    "wrong AEAD key size" true
+    (is_error (Crypto.aead_seal c ~key:"short" ~nonce ~aad:"" "data"));
+  Alcotest.(check bool)
+    "wrong nonce size" true
+    (is_error
+       (Crypto.aead_seal c ~key:(String.make 16 'k') ~nonce:"n" ~aad:"" "data"));
+  let ct =
+    ok (Crypto.aead_seal c ~key:(String.make 16 'k') ~nonce ~aad:"a" "data")
+  in
+  Alcotest.(check string)
+    "aead round trip" "data"
+    (ok (Crypto.aead_open c ~key:(String.make 16 'k') ~nonce ~aad:"a" ct));
+  Alcotest.(check bool)
+    "wrong aad" true
+    (Crypto.aead_open c ~key:(String.make 16 'k') ~nonce ~aad:"b" ct
+    = Error Mls.Error.Aead_failure);
+  Alcotest.(check bool)
+    "truncated ciphertext" true
+    (is_error
+       (Crypto.aead_open c ~key:(String.make 16 'k') ~nonce ~aad:"a" "x"))
+
 let tests =
   [
+    Alcotest.test_case "total functions" `Quick test_total;
     Alcotest.test_case "crypto-basics.json" `Quick test_crypto_basics;
     Alcotest.test_case "unsupported suites" `Quick test_unsupported;
   ]

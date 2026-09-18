@@ -29,10 +29,11 @@ let test_key_schedule () =
             (hex_field ep "group_context")
             group_context;
           let s =
-            KS.derive c ~init_secret:!init_secret
-              ~commit_secret:(hex_field ep "commit_secret")
-              ~psk_secret:(hex_field ep "psk_secret")
-              ~group_context
+            ok
+              (KS.derive c ~init_secret:!init_secret
+                 ~commit_secret:(hex_field ep "commit_secret")
+                 ~psk_secret:(hex_field ep "psk_secret")
+                 ~group_context)
           in
           let chk k v = check_bytes (n k) (hex_field ep k) v in
           chk "joiner_secret" s.joiner_secret;
@@ -51,9 +52,10 @@ let test_key_schedule () =
           | Error e -> Alcotest.fail (Mls.Error.to_string e));
           let ex = member "exporter" ep in
           check_bytes (n "exporter") (hex_field ex "secret")
-            (KS.exporter c ~exporter_secret:s.exporter_secret
-               ~label:(string_field ex "label")
-               ~context:(hex_field ex "context") (int_field ex "length"));
+            (ok
+               (KS.exporter c ~exporter_secret:s.exporter_secret
+                  ~label:(string_field ex "label")
+                  ~context:(hex_field ex "context") (int_field ex "length")));
           init_secret := s.init_secret)
         (member "epochs" v |> to_list))
 
@@ -69,7 +71,7 @@ let test_psk_secret () =
               hex_field p "psk" ))
       in
       check_bytes "psk_secret" (hex_field v "psk_secret")
-        (Mls.Psk.psk_secret c psks))
+        (ok (Mls.Psk.psk_secret c psks)))
 
 let test_transcript_hashes () =
   for_each_supported "transcript-hashes.json" (fun c v ->
@@ -103,9 +105,10 @@ let test_secret_tree () =
   for_each_supported "secret-tree.json" (fun c v ->
       let sd = member "sender_data" v in
       let key, nonce =
-        KS.sender_data_key_nonce c
-          ~sender_data_secret:(hex_field sd "sender_data_secret")
-          ~ciphertext:(hex_field sd "ciphertext")
+        ok
+          (KS.sender_data_key_nonce c
+             ~sender_data_secret:(hex_field sd "sender_data_secret")
+             ~ciphertext:(hex_field sd "ciphertext"))
       in
       check_bytes "sender_data key" (hex_field sd "key") key;
       check_bytes "sender_data nonce" (hex_field sd "nonce") nonce;
