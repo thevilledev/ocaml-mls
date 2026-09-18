@@ -124,6 +124,7 @@ let scenario suite () =
       (G.encrypt_application ~authenticated_data:"ad" a ~rng "hello from alice")
   in
   let m2, a = get "encrypt m2" (G.encrypt_application a ~rng "second") in
+  expect_error "own private message" (G.process a m1);
   let d2, s2, b = decrypt "bob m2" b m2 in
   Alcotest.(check string) "m2 data" "second" d2;
   Alcotest.(check int) "m2 sender" 0 s2;
@@ -208,8 +209,18 @@ let scenario suite () =
   let psk_prop, b =
     get "propose psk" (G.propose_psk b ~rng (G.external_psk_id b ~rng "shared"))
   in
+  let psk_ref =
+    match get "alice psk" (G.process a psk_prop) with
+    | G.Proposal_received { reference; _ }, _ -> reference
+    | _ -> Alcotest.fail "expected proposal"
+  in
   let a = process_proposal "alice psk" a psk_prop in
   let d = process_proposal "dave psk" d psk_prop in
+  (* A stray Remove is proposed too, but the committer selects only the PSK. *)
+  let stray, b = get "stray remove" (G.propose_remove b ~rng 2) in
+  let a = process_proposal "alice stray" a stray in
+  let d = process_proposal "dave stray" d stray in
+  expect_error "unknown reference" (G.commit ~references:[ "nope" ] a ~rng);
   let rc =
     Mls.Group_extensions.make_required_capabilities
       {
@@ -220,7 +231,7 @@ let scenario suite () =
   in
   let r =
     get "psk commit"
-      (G.commit ~psks
+      (G.commit ~psks ~references:[ psk_ref ]
          ~inline:[ Mls.Proposal.Group_context_extensions [ rc ] ]
          a ~rng)
   in
@@ -229,6 +240,7 @@ let scenario suite () =
   let b = process "bob psk commit" ~psks b r.commit in
   let d = process "dave psk commit" ~psks d r.commit in
   same_epoch "after psk" [ ("alice", a); ("bob", b); ("dave", d) ];
+  Alcotest.(check int) "dave still a member" 3 (List.length (G.members a));
   Alcotest.(check int) "extensions updated" 1 (List.length (G.extensions a));
   (* Resumption PSK from the previous epoch. *)
   let prev = Int64.pred (G.epoch a) in

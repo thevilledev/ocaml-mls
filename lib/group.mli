@@ -1,4 +1,4 @@
-(** Group state machine (RFC 9420 Sections 11 and 12). A value of type {!t} is
+(** Group state machine (RFC 9420 Sections 11 and 12). A value of type [t] is
     one member's view of a group in one epoch. All operations are pure: they
     return the updated state instead of mutating it, so a caller can discard a
     state (for example a commit the Delivery Service rejected). *)
@@ -98,7 +98,6 @@ val epoch_authenticator : t -> string
 val resumption_psk : t -> string
 val confirmation_tag : t -> string
 val signature_key : t -> Crypto.signature_key
-val epoch_secrets : t -> Key_schedule.epoch_secrets
 val pending_proposals : t -> (string * (Proposal.t * Framing.Sender.t)) list
 
 val export : t -> label:string -> context:string -> int -> string
@@ -177,6 +176,7 @@ val commit :
   ?authenticated_data:string ->
   ?wire:wire ->
   ?inline:Proposal.t list ->
+  ?references:string list ->
   ?force_path:bool ->
   ?psks:psk_lookup ->
   ?welcome_with_tree:bool ->
@@ -184,9 +184,10 @@ val commit :
   t ->
   rng:Mirage_crypto_rng.g ->
   (commit_result, Error.t) result
-(** Commit all pending proposals (by reference) plus [inline] proposals (by
-    value). An UpdatePath is included when required or when [force_path] is set.
-    The Welcome carries the ratchet tree unless [welcome_with_tree] is false. *)
+(** Commit pending proposals by reference, all of them unless [references]
+    selects a subset, plus [inline] proposals by value. An UpdatePath is
+    included when required or when [force_path] is set. The Welcome carries the
+    ratchet tree unless [welcome_with_tree] is false. *)
 
 val encrypt_application :
   ?authenticated_data:string ->

@@ -66,7 +66,6 @@ let epoch_authenticator t = t.secrets.Key_schedule.epoch_authenticator
 let resumption_psk t = t.secrets.Key_schedule.resumption_psk
 let confirmation_tag t = t.confirmation_tag
 let signature_key t = t.signature_key
-let epoch_secrets t = t.secrets
 let pending_proposals t = String_map.bindings t.pending
 
 let export t ~label ~context length =
@@ -204,13 +203,13 @@ let validate_key_package c ~group_id ~cipher_suite ~tree ~extensions
 let check_tree_keys_unique tree =
   let seen = Hashtbl.create 64 in
   let dup = ref false in
-  Array.iter
-    (function
+  Ratchet_tree.iteri
+    (fun _ -> function
       | Some nd ->
           let k = Node.encryption_key nd in
           if Hashtbl.mem seen k then dup := true else Hashtbl.replace seen k ()
       | None -> ())
-    tree.Ratchet_tree.nodes;
+    tree;
   if !dup then Error (Error.Invalid_tree "duplicate encryption key") else Ok ()
 
 (* Unmerged leaves must be non-blank descendants, listed in every non-blank
@@ -218,7 +217,7 @@ let check_tree_keys_unique tree =
 let check_unmerged_leaves tree =
   let n = Ratchet_tree.n_leaves tree in
   let ok = ref true in
-  Array.iteri
+  Ratchet_tree.iteri
     (fun x nd ->
       match nd with
       | Some (Node.Parent pn) ->
@@ -241,7 +240,7 @@ let check_unmerged_leaves tree =
                   (Tree_math.direct_path lx n))
             pn.Parent_node.unmerged_leaves
       | _ -> ())
-    tree.Ratchet_tree.nodes;
+    tree;
   if !ok then Ok () else Error (Error.Invalid_tree "invalid unmerged_leaves")
 
 let validate_tree c ~group_id ~cipher_suite ~extensions tree =
@@ -989,7 +988,7 @@ let apply_commit ~psks (t : t) (ac : Authenticated_content.t)
                 (function
                   | Some nd -> List.mem (Node.encryption_key nd) path_keys
                   | None -> false)
-                tree.Ratchet_tree.nodes
+                (Ratchet_tree.nodes tree)
             then fail_commit "update path key already present in the tree"
             else Ok ()
           in
@@ -1056,7 +1055,8 @@ let unprotect (t : t) (msg : Mls_message.t) =
           ~epoch:pm.Private_message.epoch
       in
       let* ac, secret_tree =
-        Message_protection.unprotect_private c ~secret_tree:t.secret_tree
+        Message_protection.unprotect_private ~own_leaf:(own_index t) c
+          ~secret_tree:t.secret_tree
           ~sender_data_secret:t.secrets.Key_schedule.sender_data_secret pm
       in
       Ok (ac, { t with secret_tree })
@@ -1323,15 +1323,26 @@ let make_welcome (t : t) ~rng ~group_info ~added ~psk_ids =
    is the committer's view of the new epoch; the caller should only adopt it
    once the Delivery Service has accepted the Commit. *)
 let commit ?(authenticated_data = "") ?(wire = Public) ?(inline = [])
-    ?(force_path = false) ?(psks = no_external_psks) ?(welcome_with_tree = true)
-    ?(group_info_extensions = []) (t : t) ~rng =
+    ?references ?(force_path = false) ?(psks = no_external_psks)
+    ?(welcome_with_tree = true) ?(group_info_extensions = []) (t : t) ~rng =
   let c = t.crypto in
   let own = own_index t in
   let committer = Sender.Member own in
-  let refs =
-    String_map.bindings t.pending
-    |> List.filter (fun (_, (p, s)) ->
-        match p with Proposal.Update _ -> s <> committer | _ -> true)
+  let* refs =
+    match references with
+    | None ->
+        Ok
+          (String_map.bindings t.pending
+          |> List.filter (fun (_, (p, s)) ->
+              match p with Proposal.Update _ -> s <> committer | _ -> true))
+    | Some rs ->
+        List.fold_right
+          (fun r acc ->
+            let* acc = acc in
+            match String_map.find_opt r t.pending with
+            | Some ps -> Ok ((r, ps) :: acc)
+            | None -> fail_commit "unknown proposal reference")
+          rs (Ok [])
   in
   let proposals =
     List.map snd refs @ List.map (fun p -> (p, committer)) inline

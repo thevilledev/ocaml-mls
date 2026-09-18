@@ -11,4 +11,5 @@ let () =
       ("treekem", Test_treekem.tests);
       ("passive", Test_passive.tests);
       ("group", Test_group.tests);
+      ("properties", Test_properties.tests);
     ]

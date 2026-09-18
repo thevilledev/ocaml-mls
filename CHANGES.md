@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-09-18
 
 - Initial implementation of the Messaging Layer Security protocol
   (RFC 9420): TLS presentation-language codec, tree math, cipher suite
@@ -14,4 +14,6 @@
   (0x0001, 0x0002, 0x0003, 0x0005, 0x0007).
 - Cipher suites 0x0004 and 0x0006 (X448 and Ed448) are recognised but not
   usable until an OCaml X448/Ed448 primitive is available to `hpke`.
+- Fuzz the decoders with Crowbar and check codec, tree-math and secret-tree
+  invariants with QCheck properties.
 - Unaudited; intended for interoperability review, not production use.

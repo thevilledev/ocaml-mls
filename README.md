@@ -65,7 +65,11 @@ Or from a checkout:
 opam install . --deps-only --with-test --with-doc
 dune build @all @doc
 dune runtest
+dune build --profile fuzz fuzz/fuzz_mls.exe
+_build/default/fuzz/fuzz_mls.exe --repeat 2000
 ```
+
+OCaml 4.14 and later are supported.
 
 ## Example
 
@@ -139,7 +143,9 @@ secrets, transcript hashes, secret tree, tree validation and operations,
 message protection, TreeKEM, and the passive-client Welcome, commit-handling,
 and 200-epoch random scenarios. End-to-end tests additionally drive several
 clients through joins, updates, removals, external joins, PSKs, group context
-changes, and application messaging on every supported suite.
+changes, and application messaging on every supported suite. QCheck properties cover
+the codec, tree math, and secret tree, and a Crowbar target fuzzes every
+decoder for totality and byte-exact re-encoding.
 
 ## License
 

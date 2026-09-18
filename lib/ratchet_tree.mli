@@ -2,8 +2,7 @@
     leaves in the array representation of Appendix C. Values are immutable;
     operations return new trees. *)
 
-type t = { nodes : Node.t option array }
-(** Read-only; use the functions below. *)
+type t
 
 val empty : t
 (** A tree with a single blank leaf. *)
@@ -11,6 +10,11 @@ val empty : t
 val width : t -> int
 val n_leaves : t -> int
 val root : t -> int
+
+val nodes : t -> Node.t option array
+(** A copy of the node array. *)
+
+val iteri : (int -> Node.t option -> unit) -> t -> unit
 val node : t -> int -> Node.t option
 val leaf : t -> int -> Leaf_node.t option
 val parent_node : t -> int -> Parent_node.t option
@@ -36,14 +40,29 @@ val filtered_direct_path_with_copath : t -> int -> (int * int) list
 
 (** {1 Hashes (Sections 7.8 and 7.9)} *)
 
-val tree_hash_at : ?exclude:int list -> Crypto.t -> t -> int -> string
+type hash_cache
+(** Memoised subtree hashes, keyed by node and excluded leaves. *)
+
+val hash_cache : unit -> hash_cache
+
+val tree_hash_at :
+  ?cache:hash_cache -> ?exclude:int list -> Crypto.t -> t -> int -> string
+
 val tree_hash : Crypto.t -> t -> string
 
 val parent_hash :
-  Crypto.t -> t -> p:int -> sibling:int -> (string, Error.t) result
+  ?cache:hash_cache ->
+  Crypto.t ->
+  t ->
+  p:int ->
+  sibling:int ->
+  (string, Error.t) result
 
 val node_parent_hash : t -> int -> string option
-val parent_hash_valid : Crypto.t -> t -> d:int -> p:int -> bool
+
+val parent_hash_valid :
+  ?cache:hash_cache -> Crypto.t -> t -> d:int -> p:int -> bool
+
 val verify_parent_hashes : Crypto.t -> t -> (unit, Error.t) result
 
 val verify_leaf_signature :

@@ -3,6 +3,8 @@
  (libraries
   mls
   alcotest
+  qcheck-core
+  qcheck-alcotest
   yojson
   hpke
   mirage-crypto-rng

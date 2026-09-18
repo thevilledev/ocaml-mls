@@ -7,6 +7,8 @@ let ( let* ) = Result.bind
 type t = { nodes : Node.t option array }
 
 let width t = Array.length t.nodes
+let nodes t = Array.copy t.nodes
+let iteri f t = Array.iteri f t.nodes
 let n_leaves t = Tree_math.leaf_count_of_width (width t)
 let root t = Tree_math.root (n_leaves t)
 let empty = { nodes = [| None |] }
@@ -89,42 +91,66 @@ let filtered_direct_path t leaf_index =
   List.map fst (filtered_direct_path_with_copath t leaf_index)
 
 (* Tree hashes (Section 7.8). [exclude] lists leaf indices to treat as blank and
-   to drop from unmerged_leaves, for original_sibling_tree_hash. *)
-let rec tree_hash_at ?(exclude = []) c t x =
-  if Tree_math.is_leaf x then
-    let li = Tree_math.leaf_of_node x in
-    let ln = if List.mem li exclude then None else leaf t li in
-    Crypto.hash c
-      (Tls.encode
-         (fun e () ->
-           Tls.Encoder.u8 e Node.node_type_leaf;
-           Tls.Encoder.u32 e li;
-           Tls.Encoder.optional e Leaf_node.encode ln)
-         ())
-  else
-    let pn =
-      match parent_node t x with
-      | Some pn when exclude <> [] ->
-          Some
-            {
-              pn with
-              Parent_node.unmerged_leaves =
-                List.filter
-                  (fun l -> not (List.mem l exclude))
-                  pn.Parent_node.unmerged_leaves;
-            }
-      | pn -> pn
-    in
-    let left_hash = tree_hash_at ~exclude c t (Tree_math.left x) in
-    let right_hash = tree_hash_at ~exclude c t (Tree_math.right x) in
-    Crypto.hash c
-      (Tls.encode
-         (fun e () ->
-           Tls.Encoder.u8 e Node.node_type_parent;
-           Tls.Encoder.optional e Parent_node.encode pn;
-           Tls.Encoder.opaque e left_hash;
-           Tls.Encoder.opaque e right_hash)
-         ())
+   to drop from unmerged_leaves, for original_sibling_tree_hash. A cache keyed
+   by node and the excluded leaves below it lets parent hash verification reuse
+   subtree hashes (Section 7.9). *)
+type hash_cache = (int * int list, string) Hashtbl.t
+
+let hash_cache () : hash_cache = Hashtbl.create 64
+
+let rec tree_hash_at ?cache ?(exclude = []) c t x =
+  let exclude =
+    List.filter
+      (fun l -> Tree_math.is_in_subtree (Tree_math.node_of_leaf l) x)
+      exclude
+    |> List.sort_uniq compare
+  in
+  let compute () =
+    if Tree_math.is_leaf x then
+      let li = Tree_math.leaf_of_node x in
+      let ln = if List.mem li exclude then None else leaf t li in
+      Crypto.hash c
+        (Tls.encode
+           (fun e () ->
+             Tls.Encoder.u8 e Node.node_type_leaf;
+             Tls.Encoder.u32 e li;
+             Tls.Encoder.optional e Leaf_node.encode ln)
+           ())
+    else
+      let pn =
+        match parent_node t x with
+        | Some pn when exclude <> [] ->
+            Some
+              {
+                pn with
+                Parent_node.unmerged_leaves =
+                  List.filter
+                    (fun l -> not (List.mem l exclude))
+                    pn.Parent_node.unmerged_leaves;
+              }
+        | pn -> pn
+      in
+      let left_hash = tree_hash_at ?cache ~exclude c t (Tree_math.left x) in
+      let right_hash = tree_hash_at ?cache ~exclude c t (Tree_math.right x) in
+      Crypto.hash c
+        (Tls.encode
+           (fun e () ->
+             Tls.Encoder.u8 e Node.node_type_parent;
+             Tls.Encoder.optional e Parent_node.encode pn;
+             Tls.Encoder.opaque e left_hash;
+             Tls.Encoder.opaque e right_hash)
+           ())
+  in
+  match cache with
+  | None -> compute ()
+  | Some cache -> (
+      let key = (x, exclude) in
+      match Hashtbl.find_opt cache key with
+      | Some h -> h
+      | None ->
+          let h = compute () in
+          Hashtbl.replace cache key h;
+          h)
 
 let tree_hash c t = tree_hash_at c t (root t)
 
@@ -137,12 +163,12 @@ let parent_hash_input ~encryption_key ~parent_hash ~original_sibling_tree_hash =
       Tls.Encoder.opaque e original_sibling_tree_hash)
     ()
 
-let parent_hash c t ~p ~sibling =
+let parent_hash ?cache c t ~p ~sibling =
   match parent_node t p with
   | None -> Error (Error.Invalid_tree "parent hash of a blank node")
   | Some pn ->
       let original_sibling_tree_hash =
-        tree_hash_at ~exclude:pn.Parent_node.unmerged_leaves c t sibling
+        tree_hash_at ?cache ~exclude:pn.Parent_node.unmerged_leaves c t sibling
       in
       Ok
         (Crypto.hash c
@@ -158,14 +184,12 @@ let node_parent_hash t x =
 
 (* Whether the parent hash of node [d] is valid with respect to parent [p]
    (Section 7.9.2). *)
-let parent_hash_valid c t ~d ~p =
-  let n = n_leaves t in
+let parent_hash_valid ?cache c t ~d ~p =
   let c_child = if d < p then Tree_math.left p else Tree_math.right p in
   let sibling = if d < p then Tree_math.right p else Tree_math.left p in
-  ignore n;
   match (node_parent_hash t d, parent_node t p) with
   | Some ph, Some pn -> (
-      match parent_hash c t ~p ~sibling with
+      match parent_hash ?cache c t ~p ~sibling with
       | Error _ -> false
       | Ok expected ->
           String.equal ph expected
@@ -188,6 +212,7 @@ let parent_hash_valid c t ~d ~p =
    from each leaf and checking that each parent is covered exactly once. *)
 let verify_parent_hashes c t =
   let n = n_leaves t in
+  let cache = hash_cache () in
   let covered = Hashtbl.create 16 in
   let error = ref None in
   List.iter
@@ -197,7 +222,7 @@ let verify_parent_hashes c t =
         | [] -> ()
         | p :: rest ->
             if is_blank t p then climb d rest
-            else if parent_hash_valid c t ~d ~p then (
+            else if parent_hash_valid ~cache c t ~d ~p then (
               if Hashtbl.mem covered p then
                 error :=
                   Some (Printf.sprintf "parent node %d covered by two chains" p)

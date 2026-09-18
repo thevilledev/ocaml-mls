@@ -163,7 +163,7 @@ let protect_private c ~rng ~secret_tree ~sender_data_secret ~padding
       ( { pm_header with Private_message.encrypted_sender_data; ciphertext },
         secret_tree )
 
-let unprotect_private c ~secret_tree ~sender_data_secret
+let unprotect_private ?own_leaf c ~secret_tree ~sender_data_secret
     (pm : Private_message.t) =
   let sd_key, sd_nonce =
     Key_schedule.sender_data_key_nonce c ~sender_data_secret
@@ -176,6 +176,12 @@ let unprotect_private c ~secret_tree ~sender_data_secret
   in
   let* { Private_message.leaf_index; generation; reuse_guard } =
     Error.of_decode (Tls.decode Private_message.decode_sender_data sender_data)
+  in
+  let* () =
+    match own_leaf with
+    | Some own when own = leaf_index ->
+        Error (Error.Invalid_message "message from own leaf")
+    | _ -> Ok ()
   in
   let content_type = pm.Private_message.content_type in
   let* (key, nonce), secret_tree =

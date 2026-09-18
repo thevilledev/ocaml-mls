@@ -56,4 +56,18 @@ jobs:
           ocaml-compiler: "5.4"
           dune-cache: true
       - run: opam install ocamlformat.0.29.0
-      - run: opam exec -- dune fmt
+      - run: opam exec -- dune build @fmt
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4"
+          dune-cache: true
+      - run: opam install . --deps-only --with-test
+      - run: opam exec -- dune build --profile fuzz fuzz/fuzz_mls.exe
+      - run: opam exec -- _build/default/fuzz/fuzz_mls.exe --repeat 2000 --seed 9420

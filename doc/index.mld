@@ -1,0 +1,39 @@
+{0 mls}
+
+[mls] implements the Messaging Layer Security protocol
+({{:https://www.rfc-editor.org/rfc/rfc9420.html}RFC 9420}) in OCaml, building
+on the [hpke] package for RFC 9180 operations.
+
+The entry point for applications is {!Mls.Group}: create a group with
+{!Mls.Group.create}, add members by committing {!Mls.Proposal.Add} proposals
+built from their {!Mls.Key_package}s, join from a Welcome with
+{!Mls.Group.join} or from a GroupInfo with {!Mls.Group.external_join}, and
+exchange {!Mls.Mls_message} values through {!Mls.Group.process},
+{!Mls.Group.val-commit}, and {!Mls.Group.encrypt_application}. Every operation
+returns a new state rather than mutating the old one.
+
+{1 Modules}
+
+{2 Application interface}
+
+{!modules: Mls.Group Mls.Key_package Mls.Leaf_node Mls.Credential
+Mls.Capabilities Mls.Mls_message Mls.Proposal Mls.Psk Mls.Extension
+Mls.Group_extensions Mls.Cipher_suite Mls.Crypto Mls.Error}
+
+{2 Protocol internals}
+
+{!modules: Mls.Ratchet_tree Mls.Treekem Mls.Key_schedule Mls.Secret_tree
+Mls.Transcript_hash Mls.Message_protection Mls.Framing Mls.Group_context
+Mls.Group_info Mls.Welcome Mls.Commit Mls.Update_path Mls.Node
+Mls.Parent_node Mls.Hpke_ciphertext Mls.Tree_math Mls.Tls Mls.Hex}
+
+{1 Cipher suites}
+
+Suites 0x0001, 0x0002, 0x0003, 0x0005 and 0x0007 are supported. Suites
+0x0004 and 0x0006 require X448 and Ed448, which are not available in OCaml;
+they are recognised on the wire but cannot be used.
+
+{1 Security}
+
+The library is unaudited. See the repository's SECURITY.md for the threat
+model, the checks performed on received messages, and known limitations.
