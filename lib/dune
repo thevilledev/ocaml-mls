@@ -1,0 +1,11 @@
+(library
+ (name mls)
+ (public_name mls)
+ (libraries
+  hpke
+  mirage-crypto
+  mirage-crypto-ec
+  mirage-crypto-rng
+  kdf.hkdf
+  digestif
+  eqaf))

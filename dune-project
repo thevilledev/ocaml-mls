@@ -1,0 +1,26 @@
+(lang dune 3.12)
+(name mls)
+(generate_opam_files true)
+(source (github thevilledev/ocaml-mls))
+(license ISC)
+(authors "Ville Vesilehto <ville@vesilehto.fi>")
+(maintainers "Ville Vesilehto <ville@vesilehto.fi>")
+
+(package
+ (name mls)
+ (synopsis "Messaging Layer Security (RFC 9420) for OCaml")
+ (description
+  "An implementation of the Messaging Layer Security protocol (RFC 9420): TLS presentation-language codec, ratchet tree (TreeKEM), key schedule, message framing and protection, and the group state machine. Cryptographic primitives are delegated to the hpke, mirage-crypto, and digestif packages.")
+ (tags (cryptography mls rfc9420 "messaging layer security" "end-to-end encryption"))
+ (depends
+  (ocaml (>= 4.14))
+  (hpke (>= 0.1.1))
+  (mirage-crypto (>= 2.4.0))
+  (mirage-crypto-ec (>= 2.4.0))
+  (mirage-crypto-rng (>= 2.4.0))
+  (kdf (>= 1.1.0))
+  (digestif (>= 1.3.1))
+  (eqaf (>= 0.10))
+  (alcotest (and :with-test (>= 1.7.0)))
+  (yojson (and :with-test (>= 2.0.0)))
+  (odoc :with-doc)))

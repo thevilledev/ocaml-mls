@@ -1,0 +1,11 @@
+(test
+ (name test_mls)
+ (libraries
+  mls
+  alcotest
+  yojson
+  hpke
+  mirage-crypto-rng
+  mirage-crypto-rng.unix)
+ (deps
+  (glob_files vectors/*.json)))
