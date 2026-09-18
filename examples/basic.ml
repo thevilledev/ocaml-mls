@@ -1,4 +1,4 @@
-(* The example from README.md. *)
+(* Two-member group example explained in doc/getting-started.md. *)
 
 open Mls
 

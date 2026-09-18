@@ -4,6 +4,21 @@
 ({{:https://www.rfc-editor.org/rfc/rfc9420.html}RFC 9420}) in OCaml, building
 on the [hpke] package for RFC 9180 operations.
 
+The library is unaudited and not production-ready. It is intended for
+interoperability review.
+
+{1 Guides}
+
+- {{:https://github.com/thevilledev/ocaml-mls/blob/main/doc/getting-started.md}Getting started}: installation and the runnable example.
+- {{:https://github.com/thevilledev/ocaml-mls/blob/main/doc/protocol-support.md}Protocol support}: features, cipher suites, and known gaps.
+- {{:https://github.com/thevilledev/ocaml-mls/blob/main/doc/development.md}Development}: building, testing, and the module map.
+- {{:https://github.com/thevilledev/ocaml-mls/blob/main/doc/releasing.md}Release checklist}: preparing and validating an opam package.
+
+These guides are also installed as Markdown under the package's documentation
+directory.
+
+{1 Application entry point}
+
 The entry point for applications is {!Mls.Group}: create a group with
 {!Mls.Group.create}, add members by committing {!Mls.Proposal.Add} proposals
 built from their {!Mls.Key_package}s, join from a Welcome with
@@ -30,10 +45,12 @@ Mls.Parent_node Mls.Hpke_ciphertext Mls.Tree_math Mls.Tls Mls.Hex}
 {1 Cipher suites}
 
 Suites 0x0001, 0x0002, 0x0003, 0x0005 and 0x0007 are supported. Suites
-0x0004 and 0x0006 require X448 and Ed448, which are not available in OCaml;
-they are recognised on the wire but cannot be used.
+0x0004 and 0x0006 require X448 and Ed448 integration; they are recognised on
+the wire but cannot be used by this library.
 
 {1 Security}
 
-The library is unaudited. See the repository's SECURITY.md for the threat
-model, the checks performed on received messages, and known limitations.
+See the repository's
+{{:https://github.com/thevilledev/ocaml-mls/blob/main/SECURITY.md}security policy}
+for the checks performed on received messages, application responsibilities,
+known limitations, and private vulnerability reporting.
