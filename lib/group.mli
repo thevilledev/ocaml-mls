@@ -42,6 +42,7 @@ type commit_result = {
 
 val create :
   ?extensions:Extension.t list ->
+  ?policy:Policy.t ->
   Crypto.t ->
   rng:Mirage_crypto_rng.g ->
   group_id:string ->
@@ -50,10 +51,13 @@ val create :
   leaf_key:Hpke.Private_key.t ->
   (t, Error.t) result
 (** Create a one-member group from the creator's leaf node (typically the one in
-    a freshly generated {!Key_package}) and its HPKE private key. *)
+    a freshly generated {!Key_package}) and its HPKE private key. The group
+    applies [policy] (default {!Policy.default}) to every KeyPackage it adds or
+    receives; the same holds for {!join} and {!external_join}. *)
 
 val join :
   ?psks:psk_lookup ->
+  ?policy:Policy.t ->
   ?tree:Ratchet_tree.t ->
   Crypto.t ->
   key_package:Key_package.t ->
@@ -67,6 +71,7 @@ val join :
 
 val external_join :
   ?psks:psk_lookup ->
+  ?policy:Policy.t ->
   ?authenticated_data:string ->
   ?tree:Ratchet_tree.t ->
   ?remove_old:int ->
@@ -99,6 +104,11 @@ val resumption_psk : t -> string
 val confirmation_tag : t -> string
 val signature_key : t -> Crypto.signature_key
 val pending_proposals : t -> (string * (Proposal.t * Framing.Sender.t)) list
+val policy : t -> Policy.t
+
+val with_policy : t -> Policy.t -> t
+(** Replace the group's validation policy, for example to install a clock in a
+    state that was created without one. *)
 
 val export :
   t -> label:string -> context:string -> int -> (string, Error.t) result
@@ -212,6 +222,7 @@ val group_info :
 (** {1 Validation} *)
 
 val validate_key_package :
+  ?policy:Policy.t ->
   Crypto.t ->
   group_id:string ->
   cipher_suite:Cipher_suite.t ->
@@ -219,4 +230,5 @@ val validate_key_package :
   extensions:Extension.t list ->
   Key_package.t ->
   (unit, Error.t) result
-(** KeyPackage validation (Section 10.1) against a group's parameters. *)
+(** KeyPackage validation (Section 10.1) against a group's parameters, including
+    the lifetime checks of [policy] (default {!Policy.default}). *)

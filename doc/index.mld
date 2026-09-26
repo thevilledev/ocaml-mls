@@ -32,7 +32,7 @@ returns a new state rather than mutating the old one.
 
 {2 Application interface}
 
-{!modules: Mls.Group Mls.Key_package Mls.Leaf_node Mls.Credential
+{!modules: Mls.Group Mls.Policy Mls.Key_package Mls.Leaf_node Mls.Credential
 Mls.Capabilities Mls.Mls_message Mls.Proposal Mls.Psk Mls.Extension
 Mls.Group_extensions Mls.Cipher_suite Mls.Crypto Mls.Error}
 

@@ -65,7 +65,9 @@ KeyPackages and private keys, and PSK provisioning. They also need to handle:
 
 - Identity verification: X.509 credentials are parsed, but certificate
   chains are not validated by the library.
-- Time validation: leaf-node lifetimes are not checked against a clock.
+- Time validation: the library has no clock. Supply one, and the maximum
+  lifetime RFC 9420 requires applications to define, through `Policy` so that
+  KeyPackage lifetimes are checked when members are added.
 - ReInit and branch resumption flows beyond proposal processing.
 
 [Security](../SECURITY.md) describes these boundaries and the limitations of
