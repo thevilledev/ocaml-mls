@@ -1,4 +1,4 @@
 (library
  (name mls)
  (public_name mls)
- (libraries hpke mirage-crypto-ec mirage-crypto-rng digestif eqaf))
+ (libraries hpke curve448 mirage-crypto-ec mirage-crypto-rng digestif eqaf))

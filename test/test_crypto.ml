@@ -108,16 +108,51 @@ let test_crypto_basics () =
               check_bytes (name ^ " encrypt/decrypt roundtrip") plaintext pt
           | Error e -> Alcotest.fail (Mls.Error.to_string e)))
 
-let test_unsupported () =
-  Alcotest.(check bool)
-    "suite 4 unsupported" true
-    (Result.is_error (Crypto.create 4));
-  Alcotest.(check bool)
-    "suite 6 unsupported" true
-    (Result.is_error (Crypto.create 6));
+let test_suites () =
+  List.iter
+    (fun suite ->
+      Alcotest.(check bool)
+        (Printf.sprintf "suite %d supported" suite)
+        true
+        (Result.is_ok (Crypto.create suite)))
+    Mls.Cipher_suite.all;
   Alcotest.(check bool)
     "suite 0 unsupported" true
-    (Result.is_error (Crypto.create 0))
+    (Result.is_error (Crypto.create 0));
+  Alcotest.(check bool)
+    "suite 8 unsupported" true
+    (Result.is_error (Crypto.create 8))
+
+(* Ed448 keys are 57-byte seeds, and a key belongs to its suite's scheme. *)
+let test_ed448_keys () =
+  let rng = rng () in
+  let c = Crypto.create_exn 4 in
+  let key = Crypto.generate_signature_key c ~rng in
+  let bytes = Crypto.signature_key_to_bytes key in
+  Alcotest.(check int) "seed length" 57 (String.length bytes);
+  let public_key = Crypto.signature_public_key key in
+  Alcotest.(check int) "public key length" 57 (String.length public_key);
+  let key' = ok (Crypto.signature_key_of_bytes c bytes) in
+  check_bytes "round trip" public_key (Crypto.signature_public_key key');
+  let signature = Crypto.sign_with_label c ~key ~label:"l" "content" in
+  Alcotest.(check int) "signature length" 114 (String.length signature);
+  Alcotest.(check bool)
+    "verify" true
+    (Crypto.verify_with_label c ~public_key ~label:"l" ~signature "content");
+  Alcotest.(check bool)
+    "wrong content" false
+    (Crypto.verify_with_label c ~public_key ~label:"l" ~signature "other");
+  let short = String.sub bytes 0 32 in
+  Alcotest.(check bool)
+    "short key" true
+    (Result.is_error (Crypto.signature_key_of_bytes c short));
+  Alcotest.(check bool)
+    "matches own suite" true
+    (Crypto.signature_key_matches c ~key ~public_key);
+  let ed25519 = Crypto.create_exn 1 in
+  Alcotest.(check bool)
+    "not an Ed25519 key" false
+    (Crypto.signature_key_matches ed25519 ~key ~public_key)
 
 (* Out-of-range lengths and wrong-sized keys are errors, never exceptions. *)
 let test_total () =
@@ -165,5 +200,6 @@ let tests =
   [
     Alcotest.test_case "total functions" `Quick test_total;
     Alcotest.test_case "crypto-basics.json" `Quick test_crypto_basics;
-    Alcotest.test_case "unsupported suites" `Quick test_unsupported;
+    Alcotest.test_case "cipher suites" `Quick test_suites;
+    Alcotest.test_case "Ed448 keys" `Quick test_ed448_keys;
   ]

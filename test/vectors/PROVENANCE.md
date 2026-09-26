@@ -21,9 +21,7 @@ directory `test-vectors/`, at commit
 | `welcome.json` | covered by `passive-client-welcome.json` | |
 | `passive-client-welcome.json`, `passive-client-handling-commit.json`, `passive-client-random.json` | `Test_passive` | |
 
-Vectors for cipher suites 0x0004 and 0x0006 (X448, Ed448) are present but
-skipped, because no OCaml implementation of those primitives is available.
-Every other vector is verified.
+Every vector is verified, for all seven cipher suites.
 
 The repository does not silently update vectors from a moving branch. Changes
 to these fixtures must cite an immutable upstream commit.

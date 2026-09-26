@@ -11,7 +11,7 @@ candidate locally before tagging or publishing it.
 - Check the version, date, and user-visible changes in [CHANGES.md](../CHANGES.md).
 - Review `mls.opam`: dependency lower bounds, OCaml and Dune requirements,
   synopsis, description, license, and repository links.
-- Remove the `pin-depends` field from `mls.opam` once `hpke` 0.2.0 is in the
+- Remove the `pin-depends` field from `mls.opam` once `hpke` 0.3.0 is in the
   opam repository. The repository rejects packages that carry it, and `mls`
   cannot be published before its `hpke` lower bound resolves there. Drop the
   matching note from the [getting started guide](getting-started.md) too.
