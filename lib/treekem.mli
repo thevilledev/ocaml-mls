@@ -14,6 +14,12 @@ module Private : sig
   val set_private_key : t -> int -> Hpke.Private_key.t -> t
   val nodes : t -> int list
 
+  val bindings : t -> (int * Hpke.Private_key.t) list
+  (** The private key of each node, by node index. *)
+
+  val of_bindings : leaf_index:int -> (int * Hpke.Private_key.t) list -> t
+  (** Rebuild a private state from {!bindings}; see {!check_consistency}. *)
+
   val prune : t -> Ratchet_tree.t -> t
   (** Drop keys for nodes that are blank or carry a different public key. *)
 

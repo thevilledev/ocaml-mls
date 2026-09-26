@@ -41,6 +41,8 @@ let () =
           check_eq ~pp:pp_hex ~eq:String.equal b (Mls.Ratchet_tree.to_bytes t)
       | exception e ->
           fail (Printf.sprintf "ratchet tree raised %s" (Printexc.to_string e)));
+  add_test ~name:"group state" [ bytes ] (fun b ->
+      total "group state" (fun b -> Mls.Group.of_bytes b) b);
   add_test ~name:"PrivateMessageContent"
     [ range 3; bytes ]
     (fun ct b ->

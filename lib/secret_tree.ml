@@ -163,3 +163,64 @@ let key_for t ~leaf ct ~generation =
         go { t with skipped } next
     in
     go t r
+
+(* Serialization, for persisting a group. Every field holds secrets. *)
+
+let encode e t =
+  let module E = Tls.Encoder in
+  let ratchets e m =
+    E.vector e
+      (fun e (leaf, r) ->
+        E.u32 e leaf;
+        E.opaque e r.secret;
+        E.u32 e r.generation)
+      (Int_map.bindings m)
+  in
+  E.u32 e t.n_leaves;
+  E.vector e
+    (fun e (node, secret) ->
+      E.u32 e node;
+      E.opaque e secret)
+    (Int_map.bindings t.nodes);
+  ratchets e t.handshake;
+  ratchets e t.application;
+  E.vector e
+    (fun e ((leaf, ct, generation), (key, nonce)) ->
+      E.u32 e leaf;
+      E.u8 e ct;
+      E.u32 e generation;
+      E.opaque e key;
+      E.opaque e nonce)
+    (Skipped_map.bindings t.skipped)
+
+let decode crypto d =
+  let module D = Tls.Decoder in
+  let ratchets d =
+    D.vector d (fun d ->
+        let leaf = D.u32 d in
+        let secret = D.opaque d in
+        let generation = D.u32 d in
+        (leaf, { secret; generation }))
+    |> List.to_seq |> Int_map.of_seq
+  in
+  let n_leaves = D.u32 d in
+  let nodes =
+    D.vector d (fun d ->
+        let node = D.u32 d in
+        let secret = D.opaque d in
+        (node, secret))
+    |> List.to_seq |> Int_map.of_seq
+  in
+  let handshake = ratchets d in
+  let application = ratchets d in
+  let skipped =
+    D.vector d (fun d ->
+        let leaf = D.u32 d in
+        let ct = D.u8 d in
+        let generation = D.u32 d in
+        let key = D.opaque d in
+        let nonce = D.opaque d in
+        ((leaf, ct, generation), (key, nonce)))
+    |> List.to_seq |> Skipped_map.of_seq
+  in
+  { crypto; n_leaves; nodes; handshake; application; skipped }

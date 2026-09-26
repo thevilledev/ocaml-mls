@@ -1967,3 +1967,192 @@ let join_branch ?(psks = no_external_psks) ?tree
   else
     Error
       (Error.Invalid_welcome "a member of the branch is not in the old group")
+
+(* Persistence *)
+
+let state_format_version = 1
+
+let encode_secrets e (s : Key_schedule.epoch_secrets) =
+  List.iter (Tls.Encoder.opaque e)
+    [
+      s.joiner_secret;
+      s.welcome_secret;
+      s.epoch_secret;
+      s.init_secret;
+      s.sender_data_secret;
+      s.encryption_secret;
+      s.exporter_secret;
+      s.external_secret;
+      s.confirmation_key;
+      s.membership_key;
+      s.resumption_psk;
+      s.epoch_authenticator;
+    ]
+
+let decode_secrets d =
+  let o () = Tls.Decoder.opaque d in
+  let joiner_secret = o () in
+  let welcome_secret = o () in
+  let epoch_secret = o () in
+  let init_secret = o () in
+  let sender_data_secret = o () in
+  let encryption_secret = o () in
+  let exporter_secret = o () in
+  let external_secret = o () in
+  let confirmation_key = o () in
+  let membership_key = o () in
+  let resumption_psk = o () in
+  let epoch_authenticator = o () in
+  {
+    Key_schedule.joiner_secret;
+    welcome_secret;
+    epoch_secret;
+    init_secret;
+    sender_data_secret;
+    encryption_secret;
+    exporter_secret;
+    external_secret;
+    confirmation_key;
+    membership_key;
+    resumption_psk;
+    epoch_authenticator;
+  }
+
+let encode_state e (t : t) =
+  let module E = Tls.Encoder in
+  let private_key e k = E.opaque e (Hpke.Private_key.to_bytes k) in
+  E.u16 e state_format_version;
+  E.u16 e (cipher_suite t);
+  Group_context.encode e t.context;
+  E.opaque e (Ratchet_tree.to_bytes t.tree);
+  E.u32 e (own_index t);
+  E.vector e
+    (fun e (node, k) ->
+      E.u32 e node;
+      private_key e k)
+    (Treekem.Private.bindings t.priv);
+  E.opaque e (Crypto.signature_key_to_bytes t.signature_key);
+  encode_secrets e t.secrets;
+  Secret_tree.encode e t.secret_tree;
+  E.opaque e t.interim_transcript_hash;
+  E.opaque e t.confirmation_tag;
+  E.vector e
+    (fun e (reference, (proposal, sender)) ->
+      E.opaque e reference;
+      Proposal.encode e proposal;
+      Sender.encode e sender)
+    (String_map.bindings t.pending);
+  E.vector e private_key t.own_leaf_keys;
+  E.vector e
+    (fun e (epoch, psk) ->
+      E.u64 e epoch;
+      E.opaque e psk)
+    (Int64_map.bindings t.resumption_psks);
+  E.vector e
+    (fun e (epoch, (past : Past_epoch.t)) ->
+      E.u64 e epoch;
+      Group_context.encode e past.context;
+      E.opaque e (Ratchet_tree.to_bytes past.tree);
+      Secret_tree.encode e past.secret_tree;
+      E.opaque e past.sender_data_secret)
+    (Int64_map.bindings t.past_epochs);
+  E.optional e
+    (fun e r -> Proposal.encode_body e (Proposal.Re_init r))
+    t.reinitialized
+
+let to_bytes t = Tls.encode encode_state t
+
+(* Errors from the parsers below become decode errors. *)
+let or_fail = function
+  | Ok v -> v
+  | Error e -> Tls.fail "%s" (Error.to_string e)
+
+let decode_state ~policy d =
+  let module D = Tls.Decoder in
+  let version = D.u16 d in
+  if version <> state_format_version then
+    Tls.fail "unsupported state format %d" version;
+  let c = or_fail (Crypto.create (D.u16 d)) in
+  let private_key d = or_fail (Crypto.hpke_private_key c (D.opaque d)) in
+  let decode_tree d = or_fail (Ratchet_tree.of_bytes (D.opaque d)) in
+  let to_map of_seq l = of_seq (List.to_seq l) in
+  let context = Group_context.decode d in
+  let tree = decode_tree d in
+  let leaf_index = D.u32 d in
+  let keys =
+    D.vector d (fun d ->
+        let node = D.u32 d in
+        let k = private_key d in
+        (node, k))
+  in
+  let signature_key = or_fail (Crypto.signature_key_of_bytes c (D.opaque d)) in
+  let secrets = decode_secrets d in
+  let secret_tree = Secret_tree.decode c d in
+  let interim_transcript_hash = D.opaque d in
+  let confirmation_tag = D.opaque d in
+  let pending =
+    D.vector d (fun d ->
+        let reference = D.opaque d in
+        let proposal = Proposal.decode d in
+        let sender = Sender.decode d in
+        (reference, (proposal, sender)))
+    |> to_map String_map.of_seq
+  in
+  let own_leaf_keys = D.vector d private_key in
+  let resumption_psks =
+    D.vector d (fun d ->
+        let epoch = D.u64 d in
+        let psk = D.opaque d in
+        (epoch, psk))
+    |> to_map Int64_map.of_seq
+  in
+  let past_epochs =
+    D.vector d (fun d ->
+        let epoch = D.u64 d in
+        let context = Group_context.decode d in
+        let tree = decode_tree d in
+        let secret_tree = Secret_tree.decode c d in
+        let sender_data_secret = D.opaque d in
+        (epoch, { Past_epoch.context; tree; secret_tree; sender_data_secret }))
+    |> to_map Int64_map.of_seq
+  in
+  let reinitialized =
+    D.optional d (fun d ->
+        match Proposal.decode_body d ~proposal_type:Proposal.type_reinit with
+        | Proposal.Re_init r -> r
+        | _ -> Tls.fail "expected a ReInit")
+  in
+  {
+    crypto = c;
+    context;
+    tree;
+    priv = Treekem.Private.of_bindings ~leaf_index keys;
+    signature_key;
+    secrets;
+    secret_tree;
+    interim_transcript_hash;
+    confirmation_tag;
+    pending;
+    own_leaf_keys;
+    resumption_psks;
+    policy;
+    past_epochs;
+    reinitialized;
+  }
+
+let of_bytes ?(policy = Policy.default) s =
+  let fail msg = Error (Error.Decode msg) in
+  let* t = Error.of_decode (Tls.decode (decode_state ~policy) s) in
+  let own = own_index t in
+  let* () =
+    if Crypto.suite t.crypto = cipher_suite t then Ok ()
+    else fail "cipher suite mismatch"
+  in
+  let* () =
+    match Treekem.Private.private_key t.priv (Tree_math.node_of_leaf own) with
+    | Some _ when Option.is_some (own_leaf t) -> Ok ()
+    | _ -> fail "no private key for the own leaf"
+  in
+  let* () = Treekem.Private.check_consistency t.priv t.tree in
+  if Secret_tree.n_leaves t.secret_tree = Ratchet_tree.n_leaves t.tree then Ok t
+  else fail "secret tree does not match the ratchet tree"

@@ -24,6 +24,9 @@ production-ready. It is published for interoperability review.
 
 - Secret key material lives in ordinary OCaml strings and cannot be reliably
   zeroised; the runtime and garbage collector may copy it.
+- `Group.to_bytes` serializes the member's private keys and the group's
+  secrets. Applications must store the result encrypted, and replace it as
+  the group advances so that old epochs' secrets do not outlive their use.
 - Signature-key operations delegate to `mirage-crypto-ec`, whose ECDSA
   nonce generation follows RFC 6979 without additional blinding.
 - The library does not authenticate identities. It passes every credential

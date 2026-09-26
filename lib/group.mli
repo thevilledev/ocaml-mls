@@ -245,6 +245,21 @@ val validate_key_package :
 (** KeyPackage validation (Section 10.1) against a group's parameters, including
     the lifetime checks of [policy] (default {!Policy.default}). *)
 
+(** {1 Persistence} *)
+
+val to_bytes : t -> string
+(** Serialize the whole state so that the application can store it and resume
+    later with {!of_bytes}. The result holds the member's private keys and the
+    group's current secrets, including those kept for past epochs and for
+    skipped messages: it is as sensitive as the signature key, and must be
+    stored encrypted and replaced, not kept alongside, as the group advances.
+    The {!policy} holds functions and is not serialized. *)
+
+val of_bytes : ?policy:Policy.t -> string -> (t, Error.t) result
+(** Restore a state serialized by {!to_bytes}, with [policy] (default
+    {!Policy.default}) as its policy. Fails with [Decode] for malformed input or
+    a state whose private keys do not match its tree. *)
+
 (** {1 Resumption}
 
     A group is reinitialized (Section 11.2) by committing a ReInit proposal and
