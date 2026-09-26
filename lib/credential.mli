@@ -1,6 +1,6 @@
 (** Credentials (RFC 9420 Section 5.3). X.509 certificates are carried but not
     validated by this library; applications validate credentials through the
-    [validate_credential] field of {!Policy.t}. *)
+    [validate_credential] field of {!Mls.Policy.t}. *)
 
 type credential_type = int
 
