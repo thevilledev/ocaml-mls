@@ -11,6 +11,7 @@ type t =
   | Invalid_tree of string
   | Invalid_leaf_node of string
   | Invalid_key_package of string
+  | Invalid_credential of string
   | Invalid_proposal of string
   | Invalid_commit of string
   | Invalid_message of string
@@ -35,6 +36,7 @@ let to_string = function
   | Invalid_tree msg -> "invalid ratchet tree: " ^ msg
   | Invalid_leaf_node msg -> "invalid leaf node: " ^ msg
   | Invalid_key_package msg -> "invalid key package: " ^ msg
+  | Invalid_credential msg -> "invalid credential: " ^ msg
   | Invalid_proposal msg -> "invalid proposal: " ^ msg
   | Invalid_commit msg -> "invalid commit: " ^ msg
   | Invalid_message msg -> "invalid message: " ^ msg

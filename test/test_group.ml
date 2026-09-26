@@ -510,6 +510,112 @@ let test_lifetime () =
   get "default policy"
     (Mls.Policy.check_lifetime Mls.Policy.default (lifetime 10L (-10L)))
 
+(* The credential validator sees every credential introduced to the group
+   (Section 5.3.1), and a rejection fails the operation. *)
+let test_credentials () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let events = ref [] in
+  let validate_credential event ~credential ~signature_key:_ =
+    let name =
+      match credential with
+      | Mls.Credential.Basic n -> n
+      | Mls.Credential.X509 _ -> "x509"
+    in
+    let event =
+      match event with
+      | Mls.Policy.Add -> "add"
+      | Mls.Policy.Join -> "join"
+      | Mls.Policy.Replace { credential = Mls.Credential.Basic old; _ } ->
+          "replace " ^ old
+      | Mls.Policy.Replace _ -> "replace"
+      | Mls.Policy.External_sender -> "external sender"
+    in
+    events := (event ^ " " ^ name) :: !events;
+    if String.equal name "mallory" then Error "not welcome" else Ok ()
+  in
+  let policy = Mls.Policy.make ~validate_credential () in
+  let seen what expected =
+    Alcotest.(check (list string)) what expected (List.rev !events);
+    events := []
+  in
+  let alice = new_client c rng "alice" and bob = new_client c rng "bob" in
+  let carol = new_client c rng "carol" in
+  let mallory = new_client c rng "mallory" in
+  let a =
+    get "create"
+      (G.create ~policy c ~rng ~group_id:"credentials"
+         ~signature_key:alice.sig_key ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let add g who =
+    G.commit ~inline:[ Mls.Proposal.Add who.kp.key_package ] g ~rng
+  in
+  expect_error "add mallory" (add a mallory);
+  seen "add mallory" [ "add mallory" ];
+  let r = get "add bob" (add a bob) in
+  seen "add bob" [ "add bob" ];
+  let a = r.state in
+  let welcome =
+    match r.welcome with
+    | Some (Mls.Mls_message.Welcome w) -> w
+    | _ -> Alcotest.fail "no welcome"
+  in
+  let b =
+    get "bob join"
+      (G.join ~policy c ~key_package:bob.kp.key_package
+         ~init_key:bob.kp.init_key ~encryption_key:bob.kp.encryption_key
+         ~signature_key:bob.sig_key welcome)
+  in
+  seen "bob join" [ "join alice" ];
+  (* Replacing a credential in an Update. *)
+  let update g name =
+    G.propose_update g ~rng ~update_leaf:(fun ln ->
+        { ln with Mls.Leaf_node.credential = Mls.Credential.Basic name })
+  in
+  let msg, _ = get "bob update" (update b "robert") in
+  seen "bob update" [ "replace bob robert" ];
+  ignore (process_proposal "alice sees update" a msg);
+  seen "alice sees update" [ "replace bob robert" ];
+  let unchecked = G.with_policy b Mls.Policy.default in
+  let msg, _ = get "unchecked update" (update unchecked "mallory") in
+  seen "unchecked update" [];
+  expect_error "alice rejects update" (G.process a msg);
+  seen "alice rejects update" [ "replace bob mallory" ];
+  (* External senders added through GroupContextExtensions. *)
+  let external_senders name =
+    [
+      Mls.Group_extensions.make_external_senders
+        [
+          {
+            Mls.Group_extensions.signature_key = "key " ^ name;
+            credential = Mls.Credential.Basic name;
+          };
+        ];
+    ]
+  in
+  ignore
+    (get "external sender"
+       (G.propose_group_context_extensions a ~rng (external_senders "ds")));
+  seen "external sender" [ "external sender ds" ];
+  expect_error "mallory as external sender"
+    (G.propose_group_context_extensions a ~rng (external_senders "mallory"));
+  seen "mallory as external sender" [ "external sender mallory" ];
+  (* External commits: the joiner validates the members, and the members
+     validate the joiner. *)
+  let gi = get "group info" (G.group_info a) in
+  let external_join ?policy who =
+    G.external_join ?policy c ~rng ~group_info:gi ~signature_key:who.sig_key
+      ~leaf_node:who.kp.key_package.leaf_node
+  in
+  let msg, _ = get "carol external join" (external_join ~policy carol) in
+  seen "carol external join" [ "join alice"; "join bob" ];
+  ignore (process "alice sees carol" a msg);
+  seen "alice sees carol" [ "add carol" ];
+  let msg, _ = get "mallory external join" (external_join mallory) in
+  expect_error "alice rejects mallory" (G.process a msg);
+  seen "alice rejects mallory" [ "add mallory" ]
+
 let tests =
   List.map
     (fun suite ->
@@ -520,4 +626,5 @@ let tests =
   @ [
       Alcotest.test_case "nine members" `Quick test_many_members;
       Alcotest.test_case "key package lifetimes" `Quick test_lifetime;
+      Alcotest.test_case "credential validation" `Quick test_credentials;
     ]

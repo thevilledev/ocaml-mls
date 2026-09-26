@@ -10,6 +10,14 @@
   accepts (RFC 9420 Section 7.3). The checks apply to KeyPackages the group
   adds itself and to Add proposals it receives, and `Group.validate_key_package`
   takes the same `?policy`. The default policy checks nothing, as before.
+- Add a credential validator to `Policy` (RFC 9420 Section 5.3.1). A group
+  calls it for every credential introduced to it: KeyPackages in Add
+  proposals it sends or receives, the joiner of an external Commit, the
+  members of a group it joins by Welcome or external Commit, a credential or
+  signature key replaced by an Update proposal or a Commit's UpdatePath (with
+  the replaced credential, so the application can judge the successor), and
+  new `external_senders` entries. A rejection fails the operation with the
+  new `Error.Invalid_credential`.
 
 ## 0.1.0 — 2026-09-18
 
