@@ -22,8 +22,11 @@ production-ready. It is published for interoperability review.
   zeroised; the runtime and garbage collector may copy it.
 - Signature-key operations delegate to `mirage-crypto-ec`, whose ECDSA
   nonce generation follows RFC 6979 without additional blinding.
-- X.509 credentials are parsed but not validated; applications must verify
-  certificate chains themselves.
+- The library does not authenticate identities. It passes every credential
+  introduced to a group to the application's validator in `Policy`, as
+  RFC 9420 Section 5.3.1 requires; without one, any credential whose leaf
+  node is otherwise valid is accepted. X.509 certificate chains are parsed
+  but not verified.
 - The library has no clock. KeyPackage lifetimes are checked only when the
   application supplies one, and a maximum lifetime, through `Policy`.
 - ReInit and branch resumption flows are not automated beyond proposal

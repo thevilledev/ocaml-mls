@@ -11,6 +11,7 @@ type t =
   | Invalid_tree of string
   | Invalid_leaf_node of string
   | Invalid_key_package of string
+  | Invalid_credential of string
   | Invalid_proposal of string
   | Invalid_commit of string
   | Invalid_message of string

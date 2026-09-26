@@ -170,6 +170,49 @@ let validate_leaf_node c ~group_id ~cipher_suite ~tree ~extensions ~expected
   then fail_leaf "signature or encryption key already in use"
   else Ok ()
 
+(* Credential validation (Section 5.3.1) *)
+
+let check_new_credential policy event (ln : Leaf_node.t) =
+  Policy.check_credential policy event ~credential:ln.Leaf_node.credential
+    ~signature_key:ln.Leaf_node.signature_key
+
+(* A leaf node that replaces [old] introduces a new credential when either its
+   credential or its signature key changes. *)
+let check_replaced_credential policy ~(old : Leaf_node.t) (ln : Leaf_node.t) =
+  if
+    ln.Leaf_node.credential = old.Leaf_node.credential
+    && String.equal ln.Leaf_node.signature_key old.Leaf_node.signature_key
+  then Ok ()
+  else
+    check_new_credential policy
+      (Policy.Replace
+         {
+           credential = old.Leaf_node.credential;
+           signature_key = old.Leaf_node.signature_key;
+         })
+      ln
+
+let check_members policy ~except tree =
+  List.fold_left
+    (fun acc (i, ln) ->
+      let* () = acc in
+      if List.mem i except then Ok ()
+      else check_new_credential policy Policy.Join ln)
+    (Ok ()) (Ratchet_tree.leaves tree)
+
+(* External senders in [extensions] that are not already in [previous]. *)
+let check_external_senders policy ~previous extensions =
+  let* senders = Group_extensions.external_senders extensions in
+  List.fold_left
+    (fun acc (s : Group_extensions.external_sender) ->
+      let* () = acc in
+      if List.mem s previous then Ok ()
+      else
+        Policy.check_credential policy Policy.External_sender
+          ~credential:s.Group_extensions.credential
+          ~signature_key:s.Group_extensions.signature_key)
+    (Ok ()) senders
+
 let validate_key_package ?(policy = Policy.default) c ~group_id ~cipher_suite
     ~tree ~extensions (kp : Key_package.t) =
   let fail msg = Error (Error.Invalid_key_package msg) in
@@ -197,6 +240,7 @@ let validate_key_package ?(policy = Policy.default) c ~group_id ~cipher_suite
       ~expected:For_key_package ~leaf_index:(-1) kp.Key_package.leaf_node
   in
   let* () = Policy.check_leaf_node policy kp.Key_package.leaf_node in
+  let* () = check_new_credential policy Policy.Add kp.Key_package.leaf_node in
   if
     String.equal kp.Key_package.init_key
       kp.Key_package.leaf_node.Leaf_node.encryption_key
@@ -279,6 +323,7 @@ let create ?(extensions = []) ?(policy = Policy.default) c ~rng ~group_id
     then Ok ()
     else Error (Error.Invalid_key "encryption key does not match leaf node")
   in
+  let* () = check_external_senders policy ~previous:[] extensions in
   let tree =
     Ratchet_tree.set Ratchet_tree.empty 0 (Some (Node.Leaf leaf_node))
   in
@@ -442,6 +487,10 @@ let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
     | Some i -> Ok i
     | None -> fail "own leaf not found in tree"
   in
+  let* () = check_members policy ~except:[ my_index ] tree in
+  let* () =
+    check_external_senders policy ~previous:[] context.Group_context.extensions
+  in
   let* () =
     if
       String.equal
@@ -555,7 +604,7 @@ let validate_proposal t ~tree ~extensions ~sender (p : Proposal.t) =
                 String.equal old.Leaf_node.encryption_key
                   ln.Leaf_node.encryption_key
               then fail_proposal "update must change the encryption key"
-              else Ok ())
+              else check_replaced_credential t.policy ~old ln)
       | _ -> fail_proposal "update from a non-member")
   | Proposal.Remove i ->
       if Ratchet_tree.leaf tree i = None then
@@ -578,6 +627,8 @@ let validate_proposal t ~tree ~extensions ~sender (p : Proposal.t) =
       else Ok ()
   | Proposal.External_init _ -> Ok ()
   | Proposal.Group_context_extensions exts -> (
+      let* previous = Group_extensions.external_senders extensions in
+      let* () = check_external_senders t.policy ~previous exts in
       let* rc = Group_extensions.required_capabilities exts in
       match rc with
       | None -> Ok ()
@@ -982,8 +1033,13 @@ let apply_commit ~psks (t : t) (ac : Authenticated_content.t)
                   when String.equal old.Leaf_node.encryption_key
                          path.Update_path.leaf_node.Leaf_node.encryption_key ->
                     fail_commit "committer's encryption key is unchanged"
-                | _ -> Ok ())
-            | _ -> Ok ()
+                | Some old ->
+                    check_replaced_credential t.policy ~old
+                      path.Update_path.leaf_node
+                | None -> Ok ())
+            | _ ->
+                check_new_credential t.policy Policy.Add
+                  path.Update_path.leaf_node
           in
           let path_keys =
             List.map
@@ -1525,6 +1581,10 @@ let external_join ?(psks = no_external_psks) ?(policy = Policy.default)
   let* () =
     validate_tree c ~group_id ~cipher_suite:suite
       ~extensions:context.Group_context.extensions tree
+  in
+  let* () = check_members policy ~except:(Option.to_list remove_old) tree in
+  let* () =
+    check_external_senders policy ~previous:[] context.Group_context.extensions
   in
   let* external_pub =
     let* ext = Group_extensions.external_pub group_info.Group_info.extensions in

@@ -63,8 +63,11 @@ keys or nonces.
 Applications own the Delivery Service, message ordering, storage of
 KeyPackages and private keys, and PSK provisioning. They also need to handle:
 
-- Identity verification: X.509 credentials are parsed, but certificate
-  chains are not validated by the library.
+- Identity verification: the library calls the application's credential
+  validator in `Policy` for every credential introduced to a group (new
+  members, the members of a group being joined, replaced credentials, and
+  external senders), but does not authenticate identities or verify X.509
+  certificate chains itself.
 - Time validation: the library has no clock. Supply one, and the maximum
   lifetime RFC 9420 requires applications to define, through `Policy` so that
   KeyPackage lifetimes are checked when members are added.

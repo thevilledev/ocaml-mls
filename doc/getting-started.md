@@ -116,8 +116,10 @@ Pass handshake and application messages to `Group.process`; use
 
 Your application supplies transport, message ordering, key storage, and
 identity verification. The example's `Credential.Basic "alice"` is an
-identity label, not proof that a key belongs to a particular person. See
-[Security](../SECURITY.md) before designing those parts of an application.
+identity label, not proof that a key belongs to a particular person: give
+each group a `Policy` whose `validate_credential` checks credentials with
+your Authentication Service. See [Security](../SECURITY.md) before designing
+those parts of an application.
 
 ## Next steps
 
