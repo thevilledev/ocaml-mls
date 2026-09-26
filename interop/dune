@@ -1,0 +1,13 @@
+(executable
+ (name mls_interop)
+ (libraries
+  mls
+  hpke
+  grpc
+  grpc-lwt
+  h2
+  h2-lwt-unix
+  lwt
+  lwt.unix
+  mirage-crypto-rng
+  mirage-crypto-rng.unix))

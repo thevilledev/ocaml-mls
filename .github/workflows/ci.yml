@@ -50,3 +50,67 @@ jobs:
           dune-cache: true
       - run: opam install ocamlformat.0.29.0
       - run: opam exec -- dune build @fmt
+
+  # Runs the mls-implementations interop scenarios against the OCaml client
+  # in interop/, with every actor played by that client.
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.4"
+          dune-cache: true
+      - run: opam pin add -y -n mls .
+      - run: opam install -y ./interop --deps-only
+      - run: opam exec -- dune build --root interop
+      - uses: actions/checkout@v4
+        with:
+          repository: mlswg/mls-implementations
+          ref: cfd450286d1bfd9cd2519b95c80f9771f94a5b1a
+          path: mls-implementations
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build the test runner
+        working-directory: mls-implementations/interop
+        run: |
+          sudo apt-get install -y protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.33.0
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          protoc --go_out=proto --go_opt=paths=source_relative \
+            --go-grpc_out=proto --go-grpc_opt=paths=source_relative \
+            -I proto mls_client.proto
+          (cd .. && go mod tidy)
+          cd test-runner && go build
+      - name: Run the interop scenarios
+        run: |
+          interop/_build/default/mls_interop.exe -port 50051 &
+          for i in $(seq 50); do nc -z localhost 50051 && break; sleep 0.2; done
+          cd mls-implementations/interop
+          status=0
+          run() {
+            config=$1; shift
+            echo "::group::$config $*"
+            ./test-runner/test-runner -client localhost:50051 \
+              -config "configs/$config.json" "$@" > "$RUNNER_TEMP/$config.json" \
+              || status=1
+            jq -r --arg c "$config" '.scripts | to_entries[] |
+              "\($c)/\(.key): \(.value | length) runs, \([.value[] | select(.failed_step != null)] | length) failed"' \
+              "$RUNNER_TEMP/$config.json" || status=1
+            jq -c '.scripts[][] | select(.failed_step != null) |
+              {cipher_suite, encrypt_flag, error, failed_step_json}' \
+              "$RUNNER_TEMP/$config.json" || true
+            echo "::endgroup::"
+          }
+          # Every cipher suite, both handshake modes.
+          for config in application commit welcome_join external_join branch reinit external_proposals; do
+            run $config
+          done
+          # 840 actors in one group: one suite is enough.
+          run deep_random -suite 1
+          exit $status

@@ -1,0 +1,28 @@
+opam-version: "2.0"
+synopsis: "MLS interop test client for the mls library"
+description: """
+A gRPC server implementing the MLSClient service of the
+mlswg/mls-implementations interop harness on top of the mls library. It is
+built and run in CI only and is not released.
+"""
+maintainer: ["Ville Vesilehto <ville@vesilehto.fi>"]
+authors: ["Ville Vesilehto <ville@vesilehto.fi>"]
+license: "ISC"
+homepage: "https://github.com/thevilledev/ocaml-mls"
+bug-reports: "https://github.com/thevilledev/ocaml-mls/issues"
+dev-repo: "git+https://github.com/thevilledev/ocaml-mls.git"
+depends: [
+  "ocaml" {>= "4.14"}
+  "dune" {>= "3.12"}
+  "mls"
+  "hpke"
+  "grpc" {= "0.2.0"}
+  "grpc-lwt" {= "0.2.0"}
+  "h2" {>= "0.10.0" & < "0.13.0"}
+  "h2-lwt-unix" {>= "0.10.0" & < "0.13.0"}
+  "lwt" {>= "5.3.0"}
+  "mirage-crypto-rng" {>= "2.4.0"}
+]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
