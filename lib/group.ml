@@ -39,6 +39,7 @@ type t = {
   resumption_psks : string Int64_map.t;
   policy : Policy.t;
   past_epochs : Past_epoch.t Int64_map.t;
+  reinitialized : Proposal.re_init option;
 }
 
 type event =
@@ -83,6 +84,7 @@ let confirmation_tag t = t.confirmation_tag
 let signature_key t = t.signature_key
 let pending_proposals t = String_map.bindings t.pending
 let policy t = t.policy
+let reinitialized t = t.reinitialized
 let with_policy t policy = { t with policy }
 
 let export t ~label ~context length =
@@ -383,6 +385,7 @@ let create ?(extensions = []) ?(policy = Policy.default) c ~rng ~group_id
       resumption_psks = Int64_map.empty;
       policy;
       past_epochs = Int64_map.empty;
+      reinitialized = None;
     }
 
 (* Pre-shared keys *)
@@ -407,9 +410,8 @@ let resolve_psks ~lookup ~group_id ~current_epoch ~current_psk ~history ids =
 
 (* Joining via Welcome (Section 12.4.3.1) *)
 
-let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
-    ~(key_package : Key_package.t) ~init_key ~encryption_key ~signature_key
-    (welcome : Welcome.t) =
+let join_internal ~psks ~policy ?tree c ~(key_package : Key_package.t) ~init_key
+    ~encryption_key ~signature_key (welcome : Welcome.t) =
   let fail msg = Error (Error.Invalid_welcome msg) in
   let suite = Crypto.suite c in
   let* () =
@@ -554,25 +556,44 @@ let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
     Transcript_hash.interim c ~confirmed_transcript_hash ~confirmation_tag
   in
   Ok
-    {
-      crypto = c;
-      context;
-      tree;
-      priv;
-      signature_key;
-      secrets;
-      secret_tree =
-        Secret_tree.create c
-          ~n_leaves:(Ratchet_tree.n_leaves tree)
-          ~encryption_secret:secrets.Key_schedule.encryption_secret;
-      interim_transcript_hash;
-      confirmation_tag;
-      pending = String_map.empty;
-      own_leaf_keys = [];
-      resumption_psks = Int64_map.empty;
-      policy;
-      past_epochs = Int64_map.empty;
-    }
+    ( {
+        crypto = c;
+        context;
+        tree;
+        priv;
+        signature_key;
+        secrets;
+        secret_tree =
+          Secret_tree.create c
+            ~n_leaves:(Ratchet_tree.n_leaves tree)
+            ~encryption_secret:secrets.Key_schedule.encryption_secret;
+        interim_transcript_hash;
+        confirmation_tag;
+        pending = String_map.empty;
+        own_leaf_keys = [];
+        resumption_psks = Int64_map.empty;
+        policy;
+        past_epochs = Int64_map.empty;
+        reinitialized = None;
+      },
+      gs.Welcome.Group_secrets.psks )
+
+let is_resumption_psk (id : Psk.id) =
+  match id.Psk.key with
+  | Psk.Resumption { usage = Psk.Reinit | Psk.Branch; _ } -> true
+  | Psk.Resumption { usage = Psk.Application; _ } | Psk.External _ -> false
+
+let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
+    ~key_package ~init_key ~encryption_key ~signature_key welcome =
+  let* t, psk_ids =
+    join_internal ~psks ~policy ?tree c ~key_package ~init_key ~encryption_key
+      ~signature_key welcome
+  in
+  if List.exists is_resumption_psk psk_ids then
+    Error
+      (Error.Invalid_welcome
+         "a ReInit or branch Welcome is joined with join_reinit or join_branch")
+  else Ok t
 
 (* Proposal validation (Sections 12.1 and 12.2) *)
 
@@ -926,9 +947,9 @@ let remember_epoch (t : t) =
 (* Finish an epoch transition once the new tree, private state, commit secret
    and provisional context are known. Shared by commit processing and commit
    creation. *)
-let advance_epoch ~psks (t : t) ~(ac : Authenticated_content.t) ~tree ~priv
-    ~commit_secret ~provisional ~psk_ids ~external_init ~confirmation_tag_check
-    =
+let advance_epoch ?(extra_psks = []) ~psks (t : t)
+    ~(ac : Authenticated_content.t) ~tree ~priv ~commit_secret ~provisional
+    ~psk_ids ~external_init ~confirmation_tag_check =
   let c = t.crypto in
   let* () = check_tree_keys_unique tree in
   let confirmed_transcript_hash =
@@ -941,6 +962,7 @@ let advance_epoch ~psks (t : t) ~(ac : Authenticated_content.t) ~tree ~priv
     resolve_psks ~lookup:psks ~group_id:(group_id t) ~current_epoch:(epoch t)
       ~current_psk:(resumption_psk t) ~history:t.resumption_psks psk_ids
   in
+  let psk_pairs = psk_pairs @ extra_psks in
   let* psk_secret = Psk.psk_secret c psk_pairs in
   let* init_secret =
     match external_init with
@@ -1113,6 +1135,7 @@ let apply_commit ~psks (t : t) (ac : Authenticated_content.t)
         ~psk_ids:applied.psk_ids ~external_init:applied.external_init
         ~confirmation_tag_check
     in
+    let t = { t with reinitialized = applied.reinit } in
     Ok
       ( Commit_applied
           {
@@ -1279,6 +1302,12 @@ let process ?(psks = no_external_psks) (t : t) msg =
 
 (* Sending messages *)
 
+(* A group left by a ReInit Commit must not be used to send (Section 12.4.2). *)
+let check_not_reinitialized (t : t) =
+  if Option.is_some t.reinitialized then
+    Error (Error.Invalid_message "the group has been reinitialized")
+  else Ok ()
+
 type wire = Public | Private
 
 let wire_format_of = function
@@ -1318,6 +1347,7 @@ let protect_content (t : t) ~rng ~wire ~padding (ac : Authenticated_content.t) =
       Ok (Mls_message.Private_message pm, { t with secret_tree })
 
 let propose ?(authenticated_data = "") ?(wire = Public) (t : t) ~rng proposal =
+  let* () = check_not_reinitialized t in
   let sender = Sender.Member (own_index t) in
   let* () =
     validate_proposal t ~tree:t.tree ~extensions:(extensions t) ~sender proposal
@@ -1473,9 +1503,13 @@ let make_welcome (t : t) ~rng ~group_info ~added ~psk_ids =
    proposals (by value), and a Welcome for any added members. The returned state
    is the committer's view of the new epoch; the caller should only adopt it
    once the Delivery Service has accepted the Commit. *)
-let commit ?(authenticated_data = "") ?(wire = Public) ?(inline = [])
-    ?references ?(force_path = false) ?(psks = no_external_psks)
+(* [extra_psks] are injected into the key schedule and the Welcome without a
+   PreSharedKey proposal, as resumption PSKs for ReInit and branching must be
+   (Sections 11.2 and 11.3). *)
+let commit_internal ~extra_psks ?(authenticated_data = "") ?(wire = Public)
+    ?(inline = []) ?references ?(force_path = false) ?(psks = no_external_psks)
     ?(welcome_with_tree = true) ?(group_info_extensions = []) (t : t) ~rng =
+  let* () = check_not_reinitialized t in
   let c = t.crypto in
   let own = own_index t in
   let committer = Sender.Member own in
@@ -1547,10 +1581,11 @@ let commit ?(authenticated_data = "") ?(wire = Public) ?(inline = [])
       (frame t ~authenticated_data (Content.Commit commit))
   in
   let* state, _ =
-    advance_epoch ~psks t ~ac ~tree ~priv ~commit_secret ~provisional
-      ~psk_ids:applied.psk_ids ~external_init:None
+    advance_epoch ~extra_psks ~psks t ~ac ~tree ~priv ~commit_secret
+      ~provisional ~psk_ids:applied.psk_ids ~external_init:None
       ~confirmation_tag_check:(fun _ -> Ok ())
   in
+  let state = { state with reinitialized = applied.reinit } in
   let ac =
     {
       ac with
@@ -1596,15 +1631,22 @@ let commit ?(authenticated_data = "") ?(wire = Public) ?(inline = [])
           kps applied.added
       in
       let* w =
-        make_welcome state ~rng ~group_info ~added ~psk_ids:applied.psk_ids
+        make_welcome state ~rng ~group_info ~added
+          ~psk_ids:(applied.psk_ids @ List.map fst extra_psks)
       in
       Ok (Some w)
   in
   Ok { commit = commit_msg; welcome; group_info; state }
 
+let commit ?authenticated_data ?wire ?inline ?references ?force_path ?psks
+    ?welcome_with_tree ?group_info_extensions t ~rng =
+  commit_internal ~extra_psks:[] ?authenticated_data ?wire ?inline ?references
+    ?force_path ?psks ?welcome_with_tree ?group_info_extensions t ~rng
+
 (* Encrypt application data as a PrivateMessage. *)
 let encrypt_application ?(authenticated_data = "") ?(padding = 0) (t : t) ~rng
     data =
+  let* () = check_not_reinitialized t in
   if not (String_map.is_empty t.pending) then
     Error
       (Error.Invalid_message
@@ -1803,4 +1845,125 @@ let external_join ?(psks = no_external_psks) ?(policy = Policy.default)
         resumption_psks = Int64_map.empty;
         policy;
         past_epochs = Int64_map.empty;
+        reinitialized = None;
       } )
+
+(* Resumption: ReInit and subgroup branching (Sections 11.2 and 11.3) *)
+
+(* Resolve the resumption PSKs of [old], for its current epoch and the epochs it
+   remembers, and defer every other PSK to [psks]. *)
+let resumption_lookup (old : t) psks (id : Psk.id) =
+  match id.Psk.key with
+  | Psk.Resumption { psk_group_id; psk_epoch; _ }
+    when String.equal psk_group_id (group_id old) ->
+      if Int64.equal psk_epoch (epoch old) then Some (resumption_psk old)
+      else Int64_map.find_opt psk_epoch old.resumption_psks
+  | _ -> psks id
+
+(* Create a group and add [key_packages] in its first Commit, which carries a
+   resumption PSK from the current epoch of [old]. *)
+let resume ~usage ?force_path ?welcome_with_tree ~extensions (old : t) c ~rng
+    ~group_id ~signature_key ~leaf_node ~leaf_key key_packages =
+  let* fresh =
+    create ~extensions ~policy:old.policy c ~rng ~group_id ~signature_key
+      ~leaf_node ~leaf_key
+  in
+  let id =
+    {
+      Psk.key =
+        Psk.Resumption
+          {
+            usage;
+            psk_group_id = old.context.Group_context.group_id;
+            psk_epoch = epoch old;
+          };
+      psk_nonce = Crypto.random ~rng (Crypto.hash_size c);
+    }
+  in
+  commit_internal
+    ~extra_psks:[ (id, resumption_psk old) ]
+    ?force_path ?welcome_with_tree
+    ~inline:(List.map (fun kp -> Proposal.Add kp) key_packages)
+    fresh ~rng
+
+let reinit ?force_path ?welcome_with_tree (old : t) c ~rng ~signature_key
+    ~leaf_node ~leaf_key key_packages =
+  match old.reinitialized with
+  | None -> Error (Error.Invalid_commit "the group has not been reinitialized")
+  | Some r when Crypto.suite c <> r.Proposal.cipher_suite ->
+      Error (Error.Invalid_key "the cipher suite differs from the ReInit")
+  | Some r ->
+      resume ~usage:Psk.Reinit ?force_path ?welcome_with_tree
+        ~extensions:r.Proposal.extensions old c ~rng
+        ~group_id:r.Proposal.group_id ~signature_key ~leaf_node ~leaf_key
+        key_packages
+
+let branch ?force_path ?welcome_with_tree ?(extensions = []) ?signature_key
+    (old : t) ~rng ~group_id ~leaf_node ~leaf_key key_packages =
+  let signature_key = Option.value signature_key ~default:old.signature_key in
+  resume ~usage:Psk.Branch ?force_path ?welcome_with_tree ~extensions old
+    old.crypto ~rng ~group_id ~signature_key ~leaf_node ~leaf_key key_packages
+
+(* A resumed group starts at epoch 1, and its Welcome carries exactly one
+   resumption PSK of [usage] from [old] (at [epoch], when given). *)
+let check_resumption ~usage ?epoch:at (old : t) psk_ids (t : t) =
+  let fail msg = Error (Error.Invalid_welcome msg) in
+  let* () =
+    match List.filter is_resumption_psk psk_ids with
+    | [ { Psk.key = Psk.Resumption r; _ } ]
+      when r.usage = usage
+           && String.equal r.psk_group_id (group_id old)
+           && Option.fold ~none:true ~some:(Int64.equal r.psk_epoch) at ->
+        Ok ()
+    | _ -> fail "expected one resumption PSK from the old group"
+  in
+  if Int64.equal (epoch t) 1L then Ok ()
+  else fail "a resumed group must start at epoch 1"
+
+let join_reinit ?(psks = no_external_psks) ?tree (old : t) c ~key_package
+    ~init_key ~encryption_key ~signature_key welcome =
+  let fail msg = Error (Error.Invalid_welcome msg) in
+  match old.reinitialized with
+  | None -> fail "the group has not been reinitialized"
+  | Some r ->
+      let* t, psk_ids =
+        join_internal
+          ~psks:(resumption_lookup old psks)
+          ~policy:old.policy ?tree c ~key_package ~init_key ~encryption_key
+          ~signature_key welcome
+      in
+      let* () =
+        check_resumption ~usage:Psk.Reinit ~epoch:(epoch old) old psk_ids t
+      in
+      let ctx = t.context in
+      if
+        String.equal ctx.Group_context.group_id r.Proposal.group_id
+        && ctx.Group_context.version = r.Proposal.version
+        && ctx.Group_context.cipher_suite = r.Proposal.cipher_suite
+        && ctx.Group_context.extensions = r.Proposal.extensions
+      then Ok t
+      else fail "the group does not match the ReInit proposal"
+
+let same_credential (a : Leaf_node.t) (b : Leaf_node.t) =
+  a.Leaf_node.credential = b.Leaf_node.credential
+
+let join_branch ?(psks = no_external_psks) ?tree
+    ?(same_member = same_credential) ?signature_key (old : t) ~key_package
+    ~init_key ~encryption_key welcome =
+  let signature_key = Option.value signature_key ~default:old.signature_key in
+  let* t, psk_ids =
+    join_internal
+      ~psks:(resumption_lookup old psks)
+      ~policy:old.policy ?tree old.crypto ~key_package ~init_key ~encryption_key
+      ~signature_key welcome
+  in
+  let* () = check_resumption ~usage:Psk.Branch old psk_ids t in
+  let old_members = List.map snd (members old) in
+  if
+    List.for_all
+      (fun (_, ln) -> List.exists (same_member ln) old_members)
+      (members t)
+  then Ok t
+  else
+    Error
+      (Error.Invalid_welcome "a member of the branch is not in the old group")

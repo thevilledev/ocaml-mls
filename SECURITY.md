@@ -33,8 +33,9 @@ production-ready. It is published for interoperability review.
   but not verified.
 - The library has no clock. KeyPackage lifetimes are checked only when the
   application supplies one, and a maximum lifetime, through `Policy`.
-- ReInit and branch resumption flows are not automated beyond proposal
-  processing.
+- Subgroup branching matches the members of a branch with members of the old
+  group by credential equality unless the application supplies its own
+  comparison.
 - Applications own the Delivery Service, message ordering, storage of key
   packages and their private keys, and PSK provisioning.
 
