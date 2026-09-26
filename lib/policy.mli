@@ -1,11 +1,12 @@
-(** Application validation policy (RFC 9420 Sections 5.3.1 and 7.3).
+(** Application policy (RFC 9420 Sections 5.3.1, 7.3 and 9.2).
 
     MLS leaves some checks to the application: the current time, against which a
     KeyPackage's lifetime is checked, the longest lifetime the application
     accepts, and the Authentication Service that validates credentials. A
     {!Group.t} carries a policy and applies it to every KeyPackage and
     credential it validates, whether it adds a member itself or learns of one
-    from a proposal, a commit, or the group it joins.
+    from a proposal, a commit, or the group it joins. The policy also sets how
+    many past epochs' secrets a group keeps for late application messages.
 
     Lifetimes are only checked for KeyPackages being added. Leaf nodes already
     in a ratchet tree are not checked: a member that has not updated since it
@@ -49,15 +50,23 @@ type t = {
       (** RFC 9420 requires every new credential to be validated. Without a
           validator the library accepts any credential whose leaf node is
           otherwise valid. *)
+  max_past_epochs : int;
+      (** How many past epochs a group keeps secret trees for, so that
+          application messages sent before a Commit but delivered after it can
+          still be decrypted. Only application messages are accepted from past
+          epochs, and each key is still used at most once. Retained secrets
+          weaken forward secrecy for as long as they are kept (Section 9.2), so
+          the default is [0]. *)
 }
 
 val default : t
-(** No clock, no maximum and no credential validator: nothing is checked. *)
+(** No clock, no maximum, no credential validator and no past epochs. *)
 
 val make :
   ?clock:(unit -> int64) ->
   ?max_lifetime:int64 ->
   ?validate_credential:credential_validator ->
+  ?max_past_epochs:int ->
   unit ->
   t
 

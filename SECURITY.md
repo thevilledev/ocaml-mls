@@ -15,6 +15,10 @@ production-ready. It is published for interoperability review.
   returned from `Group.commit`.
 - The secret tree retains keys for skipped generations within a bounded
   window and returns each key at most once.
+- Past epochs' secret trees are kept only when the application sets
+  `Policy.max_past_epochs`, and then only to decrypt application messages;
+  handshake messages from past epochs are rejected. Retained secrets weaken
+  forward secrecy until they age out.
 
 ## Limitations
 

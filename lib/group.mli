@@ -27,6 +27,9 @@ type event =
       data : string;
       sender : int;
       authenticated_data : string;
+      epoch : int64;
+          (** The epoch the message was sent in: the current one, or a past
+              epoch retained under the policy's [max_past_epochs]. *)
     }
 
 type wire = Public | Private  (** Wire format for handshake messages. *)
@@ -119,7 +122,10 @@ val export :
 
 val process :
   ?psks:psk_lookup -> t -> Mls_message.t -> (event * t, Error.t) result
-(** Process a PublicMessage or PrivateMessage for the current epoch. *)
+(** Process a PublicMessage or PrivateMessage for the current epoch, or an
+    application PrivateMessage for one of the past epochs the group retains (see
+    {!Policy.t}'s [max_past_epochs]). Messages for any other epoch fail with
+    [Wrong_epoch]. *)
 
 (** {1 Sending} *)
 
