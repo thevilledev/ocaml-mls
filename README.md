@@ -35,7 +35,8 @@ Read the [example source](examples/basic.ml) and the
   Commit messages.
 - Authenticated handshakes, encrypted application messages, pre-shared keys,
   and the MLS exporter.
-- Five cipher suites, with interoperability vectors and end-to-end tests.
+- All seven RFC 9420 cipher suites, with interoperability vectors and
+  end-to-end tests.
 - An immutable group API: operations return an updated state for the caller
   to retain.
 

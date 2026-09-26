@@ -1,13 +1,12 @@
 (** Cryptographic operations for one cipher suite (RFC 9420 Section 5.1). The
     suite's KEM, KDF and AEAD come from the hpke package, hashing and HMAC from
-    digestif, and signature algorithms from mirage-crypto-ec. *)
+    digestif, and signature algorithms from mirage-crypto-ec and curve448. *)
 
 type t
 (** A cipher suite provider. *)
 
 val create : Cipher_suite.t -> (t, Error.t) result
-(** Fails with [Unsupported_cipher_suite] for unknown suites and for the X448
-    and Ed448 suites (0x0004 and 0x0006). *)
+(** Fails with [Unsupported_cipher_suite] for a suite not in RFC 9420. *)
 
 val create_exn : Cipher_suite.t -> t
 val suite : t -> Cipher_suite.t

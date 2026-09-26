@@ -1,6 +1,6 @@
 (* Cryptographic operations for a cipher suite (RFC 9420 Section 5.1). The
    suite's KEM, KDF and AEAD come from the hpke package, hashing and HMAC from
-   digestif, and signatures from mirage-crypto-ec. *)
+   digestif, and signatures from mirage-crypto-ec and curve448. *)
 
 let ( let* ) = Result.bind
 
@@ -123,12 +123,13 @@ let hpke_public_key t bytes =
   hpke_error (Hpke.Public_key.of_bytes ~kem:t.params.kem bytes)
 
 (* NIST-curve private keys are big-endian integers; tolerate encodings that are
-   shorter than the field width (see [normalize_scalar] below). *)
+   shorter than the field width (see [normalize_scalar] below). No MLS cipher
+   suite uses ML-KEM; its keys are passed through for hpke to validate. *)
 let hpke_private_key t bytes =
   let kem = t.params.kem in
   let bytes =
     match kem with
-    | Hpke.Kem.X25519 -> bytes
+    | Hpke.Kem.(X25519 | X448 | Mlkem512 | Mlkem768 | Mlkem1024) -> bytes
     | Hpke.Kem.P256 | Hpke.Kem.P384 | Hpke.Kem.P521 ->
         let size = Hpke.Kem.private_key_size kem in
         let n = String.length bytes in
@@ -171,12 +172,14 @@ let decrypt_with_label t ~private_key ~label ~context ~kem_output ciphertext =
 (* Signatures *)
 
 module Ed25519 = Mirage_crypto_ec.Ed25519
+module Ed448 = Curve448.Ed448
 module P256 = Mirage_crypto_ec.P256.Dsa
 module P384 = Mirage_crypto_ec.P384.Dsa
 module P521 = Mirage_crypto_ec.P521.Dsa
 
 type signature_key =
   | Ed25519_key of Ed25519.priv
+  | Ed448_key of Ed448.priv
   | P256_key of P256.priv
   | P384_key of P384.priv
   | P521_key of P521.priv
@@ -211,6 +214,9 @@ let signature_key_of_bytes t bytes =
   | Cipher_suite.Ed25519 ->
       let* k = ec_error "Ed25519" (Ed25519.priv_of_octets bytes) in
       Ok (Ed25519_key k)
+  | Cipher_suite.Ed448 ->
+      let* k = ec_error "Ed448" (Ed448.priv_of_octets bytes) in
+      Ok (Ed448_key k)
   | Cipher_suite.Ecdsa_p256 ->
       let* b =
         scalar ~size:P256.byte_length
@@ -235,12 +241,14 @@ let signature_key_of_bytes t bytes =
 
 let signature_key_to_bytes = function
   | Ed25519_key k -> Ed25519.priv_to_octets k
+  | Ed448_key k -> Ed448.priv_to_octets k
   | P256_key k -> P256.priv_to_octets k
   | P384_key k -> P384.priv_to_octets k
   | P521_key k -> P521.priv_to_octets k
 
 let signature_public_key = function
   | Ed25519_key k -> Ed25519.pub_to_octets (Ed25519.pub_of_priv k)
+  | Ed448_key k -> Ed448.pub_to_octets (Ed448.pub_of_priv k)
   | P256_key k -> P256.pub_to_octets (P256.pub_of_priv k)
   | P384_key k -> P384.pub_to_octets (P384.pub_of_priv k)
   | P521_key k -> P521.pub_to_octets (P521.pub_of_priv k)
@@ -248,6 +256,7 @@ let signature_public_key = function
 let generate_signature_key t ~rng =
   match t.params.signature with
   | Cipher_suite.Ed25519 -> Ed25519_key (fst (Ed25519.generate ~g:rng ()))
+  | Cipher_suite.Ed448 -> Ed448_key (fst (Ed448.generate ~g:rng ()))
   | Cipher_suite.Ecdsa_p256 -> P256_key (fst (P256.generate ~g:rng ()))
   | Cipher_suite.Ecdsa_p384 -> P384_key (fst (P384.generate ~g:rng ()))
   | Cipher_suite.Ecdsa_p521 -> P521_key (fst (P521.generate ~g:rng ()))
@@ -319,6 +328,8 @@ let encode_sign_content e (label, content) =
 let sign _t ~key content =
   match key with
   | Ed25519_key k -> Ed25519.sign ~key:k content
+  (* Pure Ed448 with the empty context, as RFC 9420 Section 5.1.2 specifies. *)
+  | Ed448_key k -> Ed448.sign ~key:k content
   | P256_key k ->
       Der.encode_signature (P256.sign ~key:k (Sha256.digest content))
   | P384_key k ->
@@ -345,6 +356,10 @@ let verify t ~public_key ~signature content =
       match Ed25519.pub_of_octets public_key with
       | Error _ -> false
       | Ok key -> Ed25519.verify ~key signature ~msg:content)
+  | Cipher_suite.Ed448 -> (
+      match Ed448.pub_of_octets public_key with
+      | Error _ -> false
+      | Ok key -> Ed448.verify ~key signature ~msg:content)
   | Cipher_suite.Ecdsa_p256 -> ecdsa (module P256) (Sha256.digest content)
   | Cipher_suite.Ecdsa_p384 -> ecdsa (module P384) (Sha384.digest content)
   | Cipher_suite.Ecdsa_p521 -> ecdsa (module P521) (Sha512.digest content)
@@ -357,6 +372,7 @@ let signature_key_matches t ~key ~public_key =
   let matches_suite =
     match (t.params.signature, key) with
     | Cipher_suite.Ed25519, Ed25519_key _
+    | Cipher_suite.Ed448, Ed448_key _
     | Cipher_suite.Ecdsa_p256, P256_key _
     | Cipher_suite.Ecdsa_p384, P384_key _
     | Cipher_suite.Ecdsa_p521, P521_key _ ->

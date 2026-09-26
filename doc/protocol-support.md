@@ -32,26 +32,26 @@ resumption flows is not automated.
 | `0x0001` | `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` | Supported |
 | `0x0002` | `MLS_128_DHKEMP256_AES128GCM_SHA256_P256` | Supported |
 | `0x0003` | `MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519` | Supported |
-| `0x0004` | `MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448` | Recognised only |
+| `0x0004` | `MLS_256_DHKEMX448_AES256GCM_SHA512_Ed448` | Supported |
 | `0x0005` | `MLS_256_DHKEMP521_AES256GCM_SHA512_P521` | Supported |
-| `0x0006` | `MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448` | Recognised only |
+| `0x0006` | `MLS_256_DHKEMX448_CHACHA20POLY1305_SHA512_Ed448` | Supported |
 | `0x0007` | `MLS_256_DHKEMP384_AES256GCM_SHA384_P384` | Supported |
 
-Messages naming `0x0004` or `0x0006` can be parsed, but `Crypto.create`
-returns `Unsupported_cipher_suite`. These suites need X448 and Ed448
-primitives and integration in both `hpke` and `mls`. Related dependency
-packaging work is tracked in
-[ocaml/opam-repository#30768](https://github.com/ocaml/opam-repository/pull/30768).
+Other suite values can be parsed, but `Crypto.create` returns
+`Unsupported_cipher_suite` for them.
 
 ## Cryptographic dependencies
 
 The library delegates cryptographic primitives to:
 
-- [`hpke`](https://github.com/thevilledev/ocaml-hpke) 0.2.0 or later for
+- [`hpke`](https://github.com/thevilledev/ocaml-hpke) 0.3.0 or later for
   RFC 9180 HPKE and for each cipher suite's HKDF and AEAD, through the
   primitives it exports for protocols layered on HPKE.
-- [`mirage-crypto`](https://github.com/mirage/mirage-crypto) for signatures
-  (`mirage-crypto-ec`) and random-number generation (`mirage-crypto-rng`).
+- [`mirage-crypto`](https://github.com/mirage/mirage-crypto) for Ed25519 and
+  ECDSA signatures (`mirage-crypto-ec`) and random-number generation
+  (`mirage-crypto-rng`).
+- [`curve448`](https://github.com/thevilledev/ocaml-curve448) for Ed448
+  signatures. It needs a 64-bit OCaml, so `mls` does too.
 - [`digestif`](https://github.com/mirage/digestif) for hashes and HMAC.
 
 Key derivation and AEAD operations return errors, not exceptions, for secrets
@@ -75,11 +75,11 @@ secret storage and cryptographic operations.
 
 The test suite exercises every applicable vector in the pinned
 [`mlswg/mls-implementations`](https://github.com/mlswg/mls-implementations)
-corpus. Vectors for `0x0004` and `0x0006` are skipped. The
+corpus for all seven cipher suites. The
 [vector provenance](../test/vectors/PROVENANCE.md) records the upstream commit
 and maps each vector file to its tests.
 
 End-to-end tests cover joins, updates, removals, external joins, PSKs, group
-context changes, and application messages on all five supported suites.
+context changes, and application messages on all seven suites.
 See the [development guide](development.md#tests) for commands and the
 additional property and fuzz tests.

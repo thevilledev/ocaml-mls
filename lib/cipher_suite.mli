@@ -13,7 +13,7 @@ val mls_256_dhkemx448_chacha20poly1305_sha512_ed448 : t
 val mls_256_dhkemp384_aes256gcm_sha384_p384 : t
 
 type hash = Sha256 | Sha384 | Sha512
-type signature_scheme = Ed25519 | Ecdsa_p256 | Ecdsa_p384 | Ecdsa_p521
+type signature_scheme = Ed25519 | Ed448 | Ecdsa_p256 | Ecdsa_p384 | Ecdsa_p521
 
 type params = {
   kem : Hpke.Kem.id;
@@ -26,8 +26,7 @@ type params = {
 val name : t -> string option
 
 val params : t -> (params, Error.t) result
-(** Fails for unknown suites and for 0x0004 and 0x0006, whose X448 and Ed448
-    primitives are not available. *)
+(** Fails for suites not defined by RFC 9420. *)
 
 val all : t list
 val supported : t list

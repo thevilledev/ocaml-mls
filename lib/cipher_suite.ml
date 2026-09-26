@@ -13,7 +13,7 @@ let mls_256_dhkemx448_chacha20poly1305_sha512_ed448 = 0x0006
 let mls_256_dhkemp384_aes256gcm_sha384_p384 = 0x0007
 
 type hash = Sha256 | Sha384 | Sha512
-type signature_scheme = Ed25519 | Ecdsa_p256 | Ecdsa_p384 | Ecdsa_p521
+type signature_scheme = Ed25519 | Ed448 | Ecdsa_p256 | Ecdsa_p384 | Ecdsa_p521
 
 type params = {
   kem : Hpke.Kem.id;
@@ -33,8 +33,6 @@ let name = function
   | 0x0007 -> Some "MLS_256_DHKEMP384_AES256GCM_SHA384_P384"
   | _ -> None
 
-(* Suites 0x0004 and 0x0006 require X448 and Ed448, which neither the hpke
-   package nor mirage-crypto-ec provide. They are recognised but not usable. *)
 let params = function
   | 0x0001 ->
       Ok
@@ -63,6 +61,15 @@ let params = function
           hash = Sha256;
           signature = Ed25519;
         }
+  | 0x0004 ->
+      Ok
+        {
+          kem = Hpke.Kem.X448;
+          kdf = Hpke.Kdf.Hkdf_sha512;
+          aead = Hpke.Aead.Aes_256_gcm;
+          hash = Sha512;
+          signature = Ed448;
+        }
   | 0x0005 ->
       Ok
         {
@@ -71,6 +78,15 @@ let params = function
           aead = Hpke.Aead.Aes_256_gcm;
           hash = Sha512;
           signature = Ecdsa_p521;
+        }
+  | 0x0006 ->
+      Ok
+        {
+          kem = Hpke.Kem.X448;
+          kdf = Hpke.Kdf.Hkdf_sha512;
+          aead = Hpke.Aead.Chacha20_poly1305;
+          hash = Sha512;
+          signature = Ed448;
         }
   | 0x0007 ->
       Ok
@@ -84,7 +100,7 @@ let params = function
   | n -> Error (Error.Unsupported_cipher_suite n)
 
 let all = [ 0x0001; 0x0002; 0x0003; 0x0004; 0x0005; 0x0006; 0x0007 ]
-let supported = [ 0x0001; 0x0002; 0x0003; 0x0005; 0x0007 ]
+let supported = all
 let is_supported t = Result.is_ok (params t)
 
 let pp fmt t =
