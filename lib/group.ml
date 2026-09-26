@@ -12,6 +12,18 @@ type psk_lookup = Psk.id -> string option
 
 let no_external_psks _ = None
 
+(* What a member keeps of a past epoch to decrypt late application messages: the
+   unconsumed part of its secret tree and what verifying a sender's signature in
+   that epoch takes. *)
+module Past_epoch = struct
+  type t = {
+    context : Group_context.t;
+    tree : Ratchet_tree.t;
+    secret_tree : Secret_tree.t;
+    sender_data_secret : string;
+  }
+end
+
 type t = {
   crypto : Crypto.t;
   context : Group_context.t;
@@ -26,6 +38,7 @@ type t = {
   own_leaf_keys : Hpke.Private_key.t list;
   resumption_psks : string Int64_map.t;
   policy : Policy.t;
+  past_epochs : Past_epoch.t Int64_map.t;
 }
 
 type event =
@@ -43,6 +56,7 @@ type event =
       data : string;
       sender : int;
       authenticated_data : string;
+      epoch : int64;
     }
 
 let max_resumption_epochs = 256L
@@ -368,6 +382,7 @@ let create ?(extensions = []) ?(policy = Policy.default) c ~rng ~group_id
       own_leaf_keys = [];
       resumption_psks = Int64_map.empty;
       policy;
+      past_epochs = Int64_map.empty;
     }
 
 (* Pre-shared keys *)
@@ -556,6 +571,7 @@ let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
       own_leaf_keys = [];
       resumption_psks = Int64_map.empty;
       policy;
+      past_epochs = Int64_map.empty;
     }
 
 (* Proposal validation (Sections 12.1 and 12.2) *)
@@ -889,6 +905,24 @@ let remember_resumption_psk (t : t) =
   let cutoff = Int64.sub (epoch t) max_resumption_epochs in
   Int64_map.filter (fun e _ -> Int64.compare e cutoff >= 0) m
 
+(* Keep the epoch being left for late application messages, and drop epochs
+   beyond the policy's limit. *)
+let remember_epoch (t : t) =
+  let keep = t.policy.Policy.max_past_epochs in
+  if keep <= 0 then Int64_map.empty
+  else
+    let past =
+      {
+        Past_epoch.context = t.context;
+        tree = t.tree;
+        secret_tree = t.secret_tree;
+        sender_data_secret = t.secrets.Key_schedule.sender_data_secret;
+      }
+    in
+    let m = Int64_map.add (epoch t) past t.past_epochs in
+    let cutoff = Int64.sub (epoch t) (Int64.of_int (keep - 1)) in
+    Int64_map.filter (fun e _ -> Int64.compare e cutoff >= 0) m
+
 (* Finish an epoch transition once the new tree, private state, commit secret
    and provisional context are known. Shared by commit processing and commit
    creation. *)
@@ -944,6 +978,7 @@ let advance_epoch ~psks (t : t) ~(ac : Authenticated_content.t) ~tree ~priv
         pending = String_map.empty;
         own_leaf_keys = [];
         resumption_psks = remember_resumption_psk t;
+        past_epochs = remember_epoch t;
       },
       psk_pairs )
 
@@ -1154,7 +1189,53 @@ let sender_signature_key (t : t) (ac : Authenticated_content.t) =
 let proposal_reference (t : t) (ac : Authenticated_content.t) =
   Crypto.proposal_ref t.crypto (Tls.encode Authenticated_content.encode ac)
 
-let process ?(psks = no_external_psks) (t : t) msg =
+(* An application message from a retained past epoch (Section 9.2). Handshake
+   messages are never accepted from a past epoch. *)
+let process_past (t : t) (past : Past_epoch.t) (pm : Private_message.t) =
+  let c = t.crypto in
+  let epoch = pm.Private_message.epoch in
+  if pm.Private_message.content_type <> Framing.content_type_application then
+    Error
+      (Error.Wrong_epoch
+         { expected = t.context.Group_context.epoch; actual = epoch })
+  else
+    let* ac, secret_tree =
+      Message_protection.unprotect_private ~own_leaf:(own_index t) c
+        ~secret_tree:past.Past_epoch.secret_tree
+        ~sender_data_secret:past.Past_epoch.sender_data_secret pm
+    in
+    let content = ac.Authenticated_content.content in
+    match (content.Framed_content.sender, content.Framed_content.content) with
+    | Sender.Member sender, Content.Application data ->
+        let* public_key =
+          match Ratchet_tree.leaf past.Past_epoch.tree sender with
+          | Some ln -> Ok ln.Leaf_node.signature_key
+          | None -> Error (Error.Invalid_message "sender leaf is blank")
+        in
+        let* () =
+          Message_protection.verify_signature c ~public_key
+            ~group_context:(Some past.Past_epoch.context) ac
+        in
+        let past = { past with Past_epoch.secret_tree } in
+        Ok
+          ( Application_received
+              {
+                data;
+                sender;
+                authenticated_data = content.Framed_content.authenticated_data;
+                epoch;
+              },
+            { t with past_epochs = Int64_map.add epoch past t.past_epochs } )
+    | _ -> Error (Error.Invalid_message "application data from a non-member")
+
+let past_epoch (t : t) = function
+  | Mls_message.Private_message pm
+    when String.equal pm.Private_message.group_id (group_id t) ->
+      Int64_map.find_opt pm.Private_message.epoch t.past_epochs
+      |> Option.map (fun past -> (past, pm))
+  | _ -> None
+
+let process_current ~psks (t : t) msg =
   let* ac, t = unprotect t msg in
   let* public_key = sender_signature_key t ac in
   let* () =
@@ -1172,6 +1253,7 @@ let process ?(psks = no_external_psks) (t : t) msg =
                   data;
                   sender;
                   authenticated_data = content.Framed_content.authenticated_data;
+                  epoch = epoch t;
                 },
               t )
       | _ -> Error (Error.Invalid_message "application data from a non-member"))
@@ -1189,6 +1271,11 @@ let process ?(psks = no_external_psks) (t : t) msg =
             pending = String_map.add reference (proposal, sender) t.pending;
           } )
   | Content.Commit commit -> apply_commit ~psks t ac commit
+
+let process ?(psks = no_external_psks) (t : t) msg =
+  match past_epoch t msg with
+  | Some (past, pm) -> process_past t past pm
+  | None -> process_current ~psks t msg
 
 (* Sending messages *)
 
@@ -1715,4 +1802,5 @@ let external_join ?(psks = no_external_psks) ?(policy = Policy.default)
         own_leaf_keys = [];
         resumption_psks = Int64_map.empty;
         policy;
+        past_epochs = Int64_map.empty;
       } )

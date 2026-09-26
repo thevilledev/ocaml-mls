@@ -18,6 +18,12 @@
   the replaced credential, so the application can judge the successor), and
   new `external_senders` entries. A rejection fails the operation with the
   new `Error.Invalid_credential`.
+- Decrypt application messages from past epochs (RFC 9420 Section 9.2). With
+  `Policy.max_past_epochs` set, a group keeps the secret trees of that many
+  past epochs, so a message sent before a Commit but delivered after it is
+  still read. Handshake messages from past epochs are still rejected, and
+  every key is still used once. `Application_received` gains the `epoch` the
+  message was sent in. The default keeps no past epochs.
 
 ## 0.1.0 — 2026-09-18
 

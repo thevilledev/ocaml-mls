@@ -616,6 +616,75 @@ let test_credentials () =
   expect_error "alice rejects mallory" (G.process a msg);
   seen "alice rejects mallory" [ "add mallory" ]
 
+(* Application messages sent before a Commit can still be read after it, for as
+   many past epochs as the policy retains (Section 9.2). *)
+let test_past_epochs () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let policy = Mls.Policy.make ~max_past_epochs:2 () in
+  let alice = new_client c rng "alice" and bob = new_client c rng "bob" in
+  let a =
+    get "create"
+      (G.create c ~rng ~group_id:"past epochs" ~signature_key:alice.sig_key
+         ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let r =
+    get "add bob"
+      (G.commit ~inline:[ Mls.Proposal.Add bob.kp.key_package ] a ~rng)
+  in
+  let a = r.state in
+  let welcome =
+    match r.welcome with
+    | Some (Mls.Mls_message.Welcome w) -> w
+    | _ -> Alcotest.fail "no welcome"
+  in
+  let join policy =
+    get "bob join"
+      (G.join ~policy c ~key_package:bob.kp.key_package
+         ~init_key:bob.kp.init_key ~encryption_key:bob.kp.encryption_key
+         ~signature_key:bob.sig_key welcome)
+  in
+  let b = join policy and lax = join Mls.Policy.default in
+  let send a data = get data (G.encrypt_application a ~rng data) in
+  let commit a = get "commit" (G.commit ~force_path:true a ~rng) in
+  let read what g msg =
+    match get what (G.process g msg) with
+    | G.Application_received { data; epoch; _ }, g -> (data, epoch, g)
+    | _ -> Alcotest.fail (what ^ ": expected application data")
+  in
+  (* Epoch 1: two messages and a handshake message Bob sees late. *)
+  let m1, a = send a "first in epoch 1" in
+  let m1', a = send a "second in epoch 1" in
+  let late_proposal, _ =
+    get "proposal" (G.propose_update ~wire:G.Private a ~rng)
+  in
+  let r = commit a in
+  let a = r.state in
+  let b = process "bob enters epoch 2" b r.commit in
+  let lax = process "lax enters epoch 2" lax r.commit in
+  let m2, a = send a "epoch 2" in
+  let r = commit a in
+  let a = r.state in
+  let b = process "bob enters epoch 3" b r.commit in
+  (* Bob is in epoch 3 and still reads epochs 1 and 2. *)
+  let data, epoch, b = read "epoch 2 message" b m2 in
+  Alcotest.(check string) "epoch 2 data" "epoch 2" data;
+  Alcotest.(check int64) "epoch 2" 2L epoch;
+  let data, epoch, b = read "epoch 1 message" b m1 in
+  Alcotest.(check string) "epoch 1 data" "first in epoch 1" data;
+  Alcotest.(check int64) "epoch 1" 1L epoch;
+  expect_error "replayed past message" (G.process b m1);
+  expect_error "handshake from a past epoch" (G.process b late_proposal);
+  expect_error "past epochs not retained" (G.process lax m1);
+  let m3, a = send a "epoch 3" in
+  let _, epoch, b = read "current epoch message" b m3 in
+  Alcotest.(check int64) "current epoch" 3L epoch;
+  (* Epoch 4 retains epochs 3 and 2, so epoch 1 is gone. *)
+  let r = commit a in
+  let b = process "bob enters epoch 4" b r.commit in
+  expect_error "epoch 1 dropped" (G.process b m1')
+
 let tests =
   List.map
     (fun suite ->
@@ -627,4 +696,5 @@ let tests =
       Alcotest.test_case "nine members" `Quick test_many_members;
       Alcotest.test_case "key package lifetimes" `Quick test_lifetime;
       Alcotest.test_case "credential validation" `Quick test_credentials;
+      Alcotest.test_case "past epochs" `Quick test_past_epochs;
     ]

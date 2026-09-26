@@ -17,7 +17,7 @@ vectors does not establish production readiness; see [Security](../SECURITY.md).
 | Proposal delivery | By value or reference, from members, external senders, or new members, subject to the protocol's sender rules |
 | Commits | With or without an UpdatePath; Welcome generation and signed GroupInfo publication |
 | Handshakes | PublicMessage and PrivateMessage framing |
-| Application data | Encrypted PrivateMessages with out-of-order delivery within a bounded skipped-key window |
+| Application data | Encrypted PrivateMessages with out-of-order delivery within a bounded skipped-key window, and optionally from a bounded number of past epochs |
 | Key derivation | Key schedule, secret tree, external and resumption PSKs, and the MLS exporter |
 | Validation | Membership tags, signatures, confirmation tags, tree and parent hashes, leaf-node and KeyPackage rules, and proposal-list rules |
 | State | Immutable `Group.t` values; each operation returns its updated state |

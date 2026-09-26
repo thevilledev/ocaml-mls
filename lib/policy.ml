@@ -1,7 +1,8 @@
-(* Application validation policy (RFC 9420 Sections 5.3.1 and 7.3). The library
-   cannot read a clock, know the application's limits, or authenticate
-   identities, so the application supplies them here and each group applies them
-   to the leaf nodes and credentials it validates. *)
+(* Application policy (RFC 9420 Sections 5.3.1, 7.3 and 9.2). The library cannot
+   read a clock, know the application's limits, or authenticate identities, so
+   the application supplies them here and each group applies them to the leaf
+   nodes and credentials it validates. The policy also sets how long a group
+   keeps the secrets of past epochs. *)
 
 type credential_event =
   | Add
@@ -19,12 +20,19 @@ type t = {
   clock : (unit -> int64) option;
   max_lifetime : int64 option;
   validate_credential : credential_validator option;
+  max_past_epochs : int;
 }
 
-let default = { clock = None; max_lifetime = None; validate_credential = None }
+let default =
+  {
+    clock = None;
+    max_lifetime = None;
+    validate_credential = None;
+    max_past_epochs = 0;
+  }
 
-let make ?clock ?max_lifetime ?validate_credential () =
-  { clock; max_lifetime; validate_credential }
+let make ?clock ?max_lifetime ?validate_credential ?(max_past_epochs = 0) () =
+  { clock; max_lifetime; validate_credential; max_past_epochs }
 
 (* Lifetimes are uint64 seconds since the Unix epoch, so every comparison is
    unsigned: [Leaf_node.unbounded_lifetime] ends at 2^64 - 1. *)
