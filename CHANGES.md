@@ -32,6 +32,12 @@
   first Commit and Welcome. `Group.join_reinit` and `Group.join_branch` join
   such a Welcome and check the new group against the old one, and
   `Group.join` now refuses one.
+- Persist group state with `Group.to_bytes` and `Group.of_bytes`: the whole
+  state, including private keys, epoch secrets, the secret tree with its
+  skipped keys, pending proposals, retained past epochs, and the ReInit
+  marker, in a versioned binary format. The policy is supplied again when a
+  state is loaded. Loading checks that the private keys match the tree, and
+  malformed input is a `Decode` error; the fuzzer covers it.
 
 ## 0.1.0 — 2026-09-18
 

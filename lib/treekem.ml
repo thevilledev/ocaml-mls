@@ -22,6 +22,10 @@ module Private = struct
   let private_key t x = Int_map.find_opt x t.keys
   let set_private_key t x k = { t with keys = Int_map.add x k t.keys }
   let nodes t = Int_map.bindings t.keys |> List.map fst
+  let bindings t = Int_map.bindings t.keys
+
+  let of_bindings ~leaf_index keys =
+    { leaf_index; keys = Int_map.of_seq (List.to_seq keys) }
 
   (* Drop keys for nodes that are blank or carry a different public key. *)
   let prune t tree =

@@ -815,6 +815,62 @@ let test_branch () =
   let r = get "branch with a stranger" (branch [ bob''; dave ]) in
   expect_error "stranger" (join_branch bob'' (welcome_of r))
 
+(* A state saved mid-protocol, with a pending proposal, a pending own update, a
+   skipped key and a past epoch, resumes where it left off. *)
+let test_persistence () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let policy = Mls.Policy.make ~max_past_epochs:1 () in
+  let alice = new_client c rng "alice" and bob = new_client c rng "bob" in
+  let a =
+    get "create"
+      (G.create c ~rng ~group_id:"persisted" ~signature_key:alice.sig_key
+         ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let r =
+    get "add bob"
+      (G.commit ~inline:[ Mls.Proposal.Add bob.kp.key_package ] a ~rng)
+  in
+  let a = r.state in
+  let b =
+    get "bob join"
+      (G.join ~policy c ~key_package:bob.kp.key_package
+         ~init_key:bob.kp.init_key ~encryption_key:bob.kp.encryption_key
+         ~signature_key:bob.sig_key (welcome_of r))
+  in
+  let send a data = get data (G.encrypt_application a ~rng data) in
+  let m1, a = send a "epoch 1" in
+  let r = get "commit" (G.commit ~force_path:true a ~rng) in
+  let a = r.state in
+  let b = process "bob enters epoch 2" b r.commit in
+  let m2, a = send a "skipped" in
+  let m3, a = send a "read first" in
+  let _, _, b = decrypt "bob reads m3" b m3 in
+  let update, a = get "alice update" (G.propose_update a ~rng) in
+  let b = process_proposal "bob sees the update" b update in
+  let restore ?policy what g =
+    let bytes = G.to_bytes g in
+    let g = get what (G.of_bytes ?policy bytes) in
+    check_bytes (what ^ " re-encodes") bytes (G.to_bytes g);
+    expect_error (what ^ " truncated")
+      (G.of_bytes (String.sub bytes 0 (String.length bytes - 1)));
+    g
+  in
+  let a = restore "alice" a and b = restore ~policy "bob" b in
+  Alcotest.(check int)
+    "policy is supplied again" 1 (G.policy b).Mls.Policy.max_past_epochs;
+  let data, _, b = decrypt "skipped key" b m2 in
+  Alcotest.(check string) "m2" "skipped" data;
+  let data, _, b = decrypt "past epoch" b m1 in
+  Alcotest.(check string) "m1" "epoch 1" data;
+  (* Bob commits Alice's update, which she applies with the restored key. *)
+  let r = get "bob commits" (G.commit b ~rng) in
+  let a = process "alice applies her update" a r.commit in
+  same_epoch "after restoring" [ ("alice", a); ("bob", r.state) ];
+  expect_error "empty state" (G.of_bytes "");
+  expect_error "garbage" (G.of_bytes (String.make 64 '\x01'))
+
 let tests =
   List.map
     (fun suite ->
@@ -829,4 +885,5 @@ let tests =
       Alcotest.test_case "past epochs" `Quick test_past_epochs;
       Alcotest.test_case "reinit" `Quick test_reinit;
       Alcotest.test_case "branch" `Quick test_branch;
+      Alcotest.test_case "persistence" `Quick test_persistence;
     ]
