@@ -1,0 +1,3 @@
+; The interop client is a separate dune project with its own dependencies.
+
+(data_only_dirs interop)
