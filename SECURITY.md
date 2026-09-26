@@ -24,6 +24,9 @@ production-ready. It is published for interoperability review.
 
 - Secret key material lives in ordinary OCaml strings and cannot be reliably
   zeroised; the runtime and garbage collector may copy it.
+- `Group.to_bytes` serializes the member's private keys and the group's
+  secrets. Applications must store the result encrypted, and replace it as
+  the group advances so that old epochs' secrets do not outlive their use.
 - Signature-key operations delegate to `mirage-crypto-ec`, whose ECDSA
   nonce generation follows RFC 6979 without additional blinding.
 - The library does not authenticate identities. It passes every credential
@@ -33,8 +36,9 @@ production-ready. It is published for interoperability review.
   but not verified.
 - The library has no clock. KeyPackage lifetimes are checked only when the
   application supplies one, and a maximum lifetime, through `Policy`.
-- ReInit and branch resumption flows are not automated beyond proposal
-  processing.
+- Subgroup branching matches the members of a branch with members of the old
+  group by credential equality unless the application supplies its own
+  comparison.
 - Applications own the Delivery Service, message ordering, storage of key
   packages and their private keys, and PSK provisioning.
 

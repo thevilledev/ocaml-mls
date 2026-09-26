@@ -24,6 +24,20 @@
   still read. Handshake messages from past epochs are still rejected, and
   every key is still used once. `Application_received` gains the `epoch` the
   message was sent in. The default keeps no past epochs.
+- Complete ReInit and subgroup branching (RFC 9420 Sections 11.2 and 11.3).
+  A group whose ReInit Commit has been applied reports it through
+  `Group.reinitialized` and refuses to send. `Group.reinit` creates the
+  replacement group from the ReInit parameters and `Group.branch` a subgroup,
+  each injecting a resumption PSK from the old group into the new group's
+  first Commit and Welcome. `Group.join_reinit` and `Group.join_branch` join
+  such a Welcome and check the new group against the old one, and
+  `Group.join` now refuses one.
+- Persist group state with `Group.to_bytes` and `Group.of_bytes`: the whole
+  state, including private keys, epoch secrets, the secret tree with its
+  skipped keys, pending proposals, retained past epochs, and the ReInit
+  marker, in a versioned binary format. The policy is supplied again when a
+  state is loaded. Loading checks that the private keys match the tree, and
+  malformed input is a `Decode` error; the fuzzer covers it.
 
 ## 0.1.0 — 2026-09-18
 

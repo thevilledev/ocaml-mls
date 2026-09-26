@@ -38,9 +38,12 @@ Read the [example source](examples/basic.ml) and the
 - All seven RFC 9420 cipher suites, with interoperability vectors and
   end-to-end tests.
 - An immutable group API: operations return an updated state for the caller
-  to retain.
+  to retain, and serialize it for storage.
+- ReInit and subgroup branching, and decryption of late messages from recent
+  epochs.
 
-Applications provide identity verification, message delivery, and storage.
+Applications provide identity verification (through a validation policy),
+message delivery, and encrypted storage of serialized state.
 See [protocol support](doc/protocol-support.md) for the exact feature set,
 cipher suites, and known gaps.
 

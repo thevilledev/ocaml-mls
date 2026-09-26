@@ -685,6 +685,192 @@ let test_past_epochs () =
   let b = process "bob enters epoch 4" b r.commit in
   expect_error "epoch 1 dropped" (G.process b m1')
 
+let welcome_of (r : G.commit_result) =
+  match r.welcome with
+  | Some (Mls.Mls_message.Welcome w) -> w
+  | _ -> Alcotest.fail "no welcome"
+
+(* Three members, created and joined in suite [c]. *)
+let three_members c rng =
+  let alice = new_client c rng "alice" and bob = new_client c rng "bob" in
+  let charlie = new_client c rng "charlie" in
+  let a =
+    get "create"
+      (G.create c ~rng ~group_id:"old group" ~signature_key:alice.sig_key
+         ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let r =
+    get "add"
+      (G.commit
+         ~inline:
+           [
+             Mls.Proposal.Add bob.kp.key_package;
+             Mls.Proposal.Add charlie.kp.key_package;
+           ]
+         a ~rng)
+  in
+  let welcome = welcome_of r in
+  let join who =
+    get (who.name ^ " join")
+      (G.join c ~key_package:who.kp.key_package ~init_key:who.kp.init_key
+         ~encryption_key:who.kp.encryption_key ~signature_key:who.sig_key
+         welcome)
+  in
+  (r.state, join bob, join charlie)
+
+(* A group is reinitialized with a new cipher suite and group ID, and its
+   members move to the new group (Section 11.2). *)
+let test_reinit () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 and c3 = Mls.Crypto.create_exn 3 in
+  let a, b, ch = three_members c rng in
+  let before = a in
+  let reinit =
+    {
+      Mls.Proposal.group_id = "new group";
+      version = 1;
+      cipher_suite = 3;
+      extensions = [];
+    }
+  in
+  (* Alice proposes the ReInit and Bob commits it. *)
+  let msg, a = get "propose" (G.propose a ~rng (Mls.Proposal.Re_init reinit)) in
+  let b = process_proposal "bob sees the proposal" b msg in
+  let ch = process_proposal "charlie sees the proposal" ch msg in
+  let r = get "commit" (G.commit b ~rng) in
+  let b = r.state in
+  let a = process "alice sees the commit" a r.commit in
+  let ch = process "charlie sees the commit" ch r.commit in
+  List.iter
+    (fun (name, g) ->
+      Alcotest.(check bool)
+        (name ^ " reinitialized") true
+        (G.reinitialized g = Some reinit))
+    [ ("alice", a); ("bob", b); ("charlie", ch) ];
+  expect_error "old group cannot send" (G.encrypt_application a ~rng "late");
+  expect_error "old group cannot commit" (G.commit a ~rng);
+  (* Charlie brings everyone into the new group, in the new suite. *)
+  let alice' = new_client c3 rng "alice" and bob' = new_client c3 rng "bob" in
+  let charlie' = new_client c3 rng "charlie" in
+  let reinit_in c =
+    G.reinit ch c ~rng ~signature_key:charlie'.sig_key
+      ~leaf_node:charlie'.kp.key_package.leaf_node
+      ~leaf_key:charlie'.kp.encryption_key
+      [ alice'.kp.key_package; bob'.kp.key_package ]
+  in
+  expect_error "reinit in the old suite" (reinit_in c);
+  let r = get "reinit" (reinit_in c3) in
+  let welcome = welcome_of r in
+  let join_reinit old who =
+    G.join_reinit old c3 ~key_package:who.kp.key_package
+      ~init_key:who.kp.init_key ~encryption_key:who.kp.encryption_key
+      ~signature_key:who.sig_key welcome
+  in
+  let a' = get "alice joins" (join_reinit a alice') in
+  let b' = get "bob joins" (join_reinit b bob') in
+  same_epoch "new group" [ ("charlie", r.state); ("alice", a'); ("bob", b') ];
+  Alcotest.(check int64) "epoch 1" 1L (G.epoch a');
+  Alcotest.(check string) "group id" "new group" (G.group_id a');
+  Alcotest.(check int) "cipher suite" 3 (G.cipher_suite a');
+  expect_error "not reinitialized" (join_reinit before alice');
+  expect_error "plain join"
+    (G.join c3 ~key_package:alice'.kp.key_package ~init_key:alice'.kp.init_key
+       ~encryption_key:alice'.kp.encryption_key ~signature_key:alice'.sig_key
+       welcome);
+  let m, _ = get "send" (G.encrypt_application a' ~rng "hello") in
+  let data, _, _ = decrypt "bob reads" b' m in
+  Alcotest.(check string) "new group message" "hello" data
+
+(* A member branches a subgroup, and only members of the old group may be in it
+   (Section 11.3). *)
+let test_branch () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let a, b, _ = three_members c rng in
+  let branch members =
+    let alice' = new_client c rng "alice" in
+    G.branch ~signature_key:alice'.sig_key a ~rng ~group_id:"subgroup"
+      ~leaf_node:alice'.kp.key_package.leaf_node
+      ~leaf_key:alice'.kp.encryption_key
+      (List.map (fun who -> who.kp.key_package) members)
+  in
+  let join_branch who welcome =
+    G.join_branch ~signature_key:who.sig_key b ~key_package:who.kp.key_package
+      ~init_key:who.kp.init_key ~encryption_key:who.kp.encryption_key welcome
+  in
+  let bob' = new_client c rng "bob" in
+  let r = get "branch" (branch [ bob' ]) in
+  let welcome = welcome_of r in
+  let b' = get "bob joins" (join_branch bob' welcome) in
+  same_epoch "subgroup" [ ("alice", r.state); ("bob", b') ];
+  Alcotest.(check int) "two members" 2 (List.length (G.members b'));
+  expect_error "plain join"
+    (G.join c ~key_package:bob'.kp.key_package ~init_key:bob'.kp.init_key
+       ~encryption_key:bob'.kp.encryption_key ~signature_key:bob'.sig_key
+       welcome);
+  (* The old group carries on. *)
+  ignore (get "old group" (G.encrypt_application a ~rng "still here"));
+  let bob'' = new_client c rng "bob" and dave = new_client c rng "dave" in
+  let r = get "branch with a stranger" (branch [ bob''; dave ]) in
+  expect_error "stranger" (join_branch bob'' (welcome_of r))
+
+(* A state saved mid-protocol, with a pending proposal, a pending own update, a
+   skipped key and a past epoch, resumes where it left off. *)
+let test_persistence () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let policy = Mls.Policy.make ~max_past_epochs:1 () in
+  let alice = new_client c rng "alice" and bob = new_client c rng "bob" in
+  let a =
+    get "create"
+      (G.create c ~rng ~group_id:"persisted" ~signature_key:alice.sig_key
+         ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let r =
+    get "add bob"
+      (G.commit ~inline:[ Mls.Proposal.Add bob.kp.key_package ] a ~rng)
+  in
+  let a = r.state in
+  let b =
+    get "bob join"
+      (G.join ~policy c ~key_package:bob.kp.key_package
+         ~init_key:bob.kp.init_key ~encryption_key:bob.kp.encryption_key
+         ~signature_key:bob.sig_key (welcome_of r))
+  in
+  let send a data = get data (G.encrypt_application a ~rng data) in
+  let m1, a = send a "epoch 1" in
+  let r = get "commit" (G.commit ~force_path:true a ~rng) in
+  let a = r.state in
+  let b = process "bob enters epoch 2" b r.commit in
+  let m2, a = send a "skipped" in
+  let m3, a = send a "read first" in
+  let _, _, b = decrypt "bob reads m3" b m3 in
+  let update, a = get "alice update" (G.propose_update a ~rng) in
+  let b = process_proposal "bob sees the update" b update in
+  let restore ?policy what g =
+    let bytes = G.to_bytes g in
+    let g = get what (G.of_bytes ?policy bytes) in
+    check_bytes (what ^ " re-encodes") bytes (G.to_bytes g);
+    expect_error (what ^ " truncated")
+      (G.of_bytes (String.sub bytes 0 (String.length bytes - 1)));
+    g
+  in
+  let a = restore "alice" a and b = restore ~policy "bob" b in
+  Alcotest.(check int)
+    "policy is supplied again" 1 (G.policy b).Mls.Policy.max_past_epochs;
+  let data, _, b = decrypt "skipped key" b m2 in
+  Alcotest.(check string) "m2" "skipped" data;
+  let data, _, b = decrypt "past epoch" b m1 in
+  Alcotest.(check string) "m1" "epoch 1" data;
+  (* Bob commits Alice's update, which she applies with the restored key. *)
+  let r = get "bob commits" (G.commit b ~rng) in
+  let a = process "alice applies her update" a r.commit in
+  same_epoch "after restoring" [ ("alice", a); ("bob", r.state) ];
+  expect_error "empty state" (G.of_bytes "");
+  expect_error "garbage" (G.of_bytes (String.make 64 '\x01'))
+
 let tests =
   List.map
     (fun suite ->
@@ -697,4 +883,7 @@ let tests =
       Alcotest.test_case "key package lifetimes" `Quick test_lifetime;
       Alcotest.test_case "credential validation" `Quick test_credentials;
       Alcotest.test_case "past epochs" `Quick test_past_epochs;
+      Alcotest.test_case "reinit" `Quick test_reinit;
+      Alcotest.test_case "branch" `Quick test_branch;
+      Alcotest.test_case "persistence" `Quick test_persistence;
     ]

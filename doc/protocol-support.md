@@ -20,10 +20,12 @@ vectors does not establish production readiness; see [Security](../SECURITY.md).
 | Application data | Encrypted PrivateMessages with out-of-order delivery within a bounded skipped-key window, and optionally from a bounded number of past epochs |
 | Key derivation | Key schedule, secret tree, external and resumption PSKs, and the MLS exporter |
 | Validation | Membership tags, signatures, confirmation tags, tree and parent hashes, leaf-node and KeyPackage rules, and proposal-list rules |
-| State | Immutable `Group.t` values; each operation returns its updated state |
+| State | Immutable `Group.t` values; each operation returns its updated state, and `Group.to_bytes` and `Group.of_bytes` persist it |
 
-ReInit proposal handling is supported, but completing the ReInit and branch
-resumption flows is not automated.
+ReInit and subgroup branching are supported end to end: `Group.reinit` and
+`Group.branch` create the new group with a resumption PSK from the old one,
+and `Group.join_reinit` and `Group.join_branch` join it with the checks of
+RFC 9420 Sections 11.2 and 11.3.
 
 ## Cipher suites
 
@@ -71,7 +73,6 @@ KeyPackages and private keys, and PSK provisioning. They also need to handle:
 - Time validation: the library has no clock. Supply one, and the maximum
   lifetime RFC 9420 requires applications to define, through `Policy` so that
   KeyPackage lifetimes are checked when members are added.
-- ReInit and branch resumption flows beyond proposal processing.
 
 [Security](../SECURITY.md) describes these boundaries and the limitations of
 secret storage and cryptographic operations.

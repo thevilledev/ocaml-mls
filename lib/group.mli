@@ -109,6 +109,11 @@ val signature_key : t -> Crypto.signature_key
 val pending_proposals : t -> (string * (Proposal.t * Framing.Sender.t)) list
 val policy : t -> Policy.t
 
+val reinitialized : t -> Proposal.re_init option
+(** The ReInit proposal of the Commit that ended this group, if any. A
+    reinitialized group can no longer send messages; its members move to the new
+    group with {!reinit} and {!join_reinit}. *)
+
 val with_policy : t -> Policy.t -> t
 (** Replace the group's validation policy, for example to install a clock in a
     state that was created without one. *)
@@ -205,7 +210,8 @@ val commit :
 (** Commit pending proposals by reference, all of them unless [references]
     selects a subset, plus [inline] proposals by value. An UpdatePath is
     included when required or when [force_path] is set. The Welcome carries the
-    ratchet tree unless [welcome_with_tree] is false. *)
+    ratchet tree unless [welcome_with_tree] is false. Committing, proposing and
+    encrypting fail once the group has been {!reinitialized}. *)
 
 val encrypt_application :
   ?authenticated_data:string ->
@@ -238,3 +244,95 @@ val validate_key_package :
   (unit, Error.t) result
 (** KeyPackage validation (Section 10.1) against a group's parameters, including
     the lifetime checks of [policy] (default {!Policy.default}). *)
+
+(** {1 Persistence} *)
+
+val to_bytes : t -> string
+(** Serialize the whole state so that the application can store it and resume
+    later with {!of_bytes}. The result holds the member's private keys and the
+    group's current secrets, including those kept for past epochs and for
+    skipped messages: it is as sensitive as the signature key, and must be
+    stored encrypted and replaced, not kept alongside, as the group advances.
+    The {!policy} holds functions and is not serialized. *)
+
+val of_bytes : ?policy:Policy.t -> string -> (t, Error.t) result
+(** Restore a state serialized by {!to_bytes}, with [policy] (default
+    {!Policy.default}) as its policy. Fails with [Decode] for malformed input or
+    a state whose private keys do not match its tree. *)
+
+(** {1 Resumption}
+
+    A group is reinitialized (Section 11.2) by committing a ReInit proposal and
+    then creating a new group whose first Commit carries a [reinit] resumption
+    PSK from the old group, and branched (Section 11.3) by creating a new group
+    of some of its members whose first Commit carries a [branch] resumption PSK.
+    These PSKs are injected into the new group's key schedule and Welcome rather
+    than proposed, since a PreSharedKey proposal for them is invalid. *)
+
+val reinit :
+  ?force_path:bool ->
+  ?welcome_with_tree:bool ->
+  t ->
+  Crypto.t ->
+  rng:Mirage_crypto_rng.g ->
+  signature_key:Crypto.signature_key ->
+  leaf_node:Leaf_node.t ->
+  leaf_key:Hpke.Private_key.t ->
+  Key_package.t list ->
+  (commit_result, Error.t) result
+(** [reinit old c ...] creates the group that replaces [old], which must be
+    {!reinitialized}, with the ReInit proposal's group ID, cipher suite and
+    extensions, and adds the members' new KeyPackages. [c] must be the new
+    cipher suite, and [signature_key], [leaf_node] and [leaf_key] are the
+    caller's credentials in it, as for {!create}. The result's [welcome] brings
+    the other members in through {!join_reinit}. *)
+
+val join_reinit :
+  ?psks:psk_lookup ->
+  ?tree:Ratchet_tree.t ->
+  t ->
+  Crypto.t ->
+  key_package:Key_package.t ->
+  init_key:Hpke.Private_key.t ->
+  encryption_key:Hpke.Private_key.t ->
+  signature_key:Crypto.signature_key ->
+  Welcome.t ->
+  (t, Error.t) result
+(** Join the group that replaces [old] from a Welcome made by {!reinit}. Besides
+    the checks of {!join}, the new group must match [old]'s ReInit proposal,
+    start at epoch 1, and carry a [reinit] resumption PSK from [old]'s current
+    epoch. The new group keeps [old]'s policy. *)
+
+val branch :
+  ?force_path:bool ->
+  ?welcome_with_tree:bool ->
+  ?extensions:Extension.t list ->
+  ?signature_key:Crypto.signature_key ->
+  t ->
+  rng:Mirage_crypto_rng.g ->
+  group_id:string ->
+  leaf_node:Leaf_node.t ->
+  leaf_key:Hpke.Private_key.t ->
+  Key_package.t list ->
+  (commit_result, Error.t) result
+(** [branch old ~group_id ...] creates a subgroup of [old] with the same cipher
+    suite, holding the caller and the members whose KeyPackages are given. The
+    caller signs with [old]'s signature key unless [signature_key] is given. The
+    result's [welcome] brings the members in through {!join_branch}. *)
+
+val join_branch :
+  ?psks:psk_lookup ->
+  ?tree:Ratchet_tree.t ->
+  ?same_member:(Leaf_node.t -> Leaf_node.t -> bool) ->
+  ?signature_key:Crypto.signature_key ->
+  t ->
+  key_package:Key_package.t ->
+  init_key:Hpke.Private_key.t ->
+  encryption_key:Hpke.Private_key.t ->
+  Welcome.t ->
+  (t, Error.t) result
+(** Join a subgroup of [old] from a Welcome made by {!branch}. Besides the
+    checks of {!join}, the subgroup must start at epoch 1, carry a [branch]
+    resumption PSK from [old], and have only members that [same_member] matches
+    with a member of [old]. By default two members match when their credentials
+    are equal. *)

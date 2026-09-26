@@ -20,3 +20,8 @@ val key_for :
 (** The [(key, nonce)] for receiving a message from [leaf] at [generation]. Keys
     for skipped generations are retained within a bounded window so that
     reordered messages can be decrypted; every key is returned at most once. *)
+
+val encode : Tls.Encoder.t -> t -> unit
+(** Serialize the tree for persistence. The output holds secrets. *)
+
+val decode : Crypto.t -> Tls.Decoder.t -> t
