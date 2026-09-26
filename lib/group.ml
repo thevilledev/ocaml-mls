@@ -25,6 +25,7 @@ type t = {
   pending : (Proposal.t * Sender.t) String_map.t;
   own_leaf_keys : Hpke.Private_key.t list;
   resumption_psks : string Int64_map.t;
+  policy : Policy.t;
 }
 
 type event =
@@ -67,6 +68,8 @@ let resumption_psk t = t.secrets.Key_schedule.resumption_psk
 let confirmation_tag t = t.confirmation_tag
 let signature_key t = t.signature_key
 let pending_proposals t = String_map.bindings t.pending
+let policy t = t.policy
+let with_policy t policy = { t with policy }
 
 let export t ~label ~context length =
   Key_schedule.exporter t.crypto
@@ -167,8 +170,8 @@ let validate_leaf_node c ~group_id ~cipher_suite ~tree ~extensions ~expected
   then fail_leaf "signature or encryption key already in use"
   else Ok ()
 
-let validate_key_package c ~group_id ~cipher_suite ~tree ~extensions
-    (kp : Key_package.t) =
+let validate_key_package ?(policy = Policy.default) c ~group_id ~cipher_suite
+    ~tree ~extensions (kp : Key_package.t) =
   let fail msg = Error (Error.Invalid_key_package msg) in
   let* () =
     if kp.Key_package.version <> Framing.protocol_version_mls10 then
@@ -193,6 +196,7 @@ let validate_key_package c ~group_id ~cipher_suite ~tree ~extensions
     validate_leaf_node c ~group_id ~cipher_suite ~tree ~extensions
       ~expected:For_key_package ~leaf_index:(-1) kp.Key_package.leaf_node
   in
+  let* () = Policy.check_leaf_node policy kp.Key_package.leaf_node in
   if
     String.equal kp.Key_package.init_key
       kp.Key_package.leaf_node.Leaf_node.encryption_key
@@ -258,8 +262,8 @@ let validate_tree c ~group_id ~cipher_suite ~extensions tree =
 
 (* Group creation (Section 11) *)
 
-let create ?(extensions = []) c ~rng ~group_id ~signature_key ~leaf_node
-    ~leaf_key =
+let create ?(extensions = []) ?(policy = Policy.default) c ~rng ~group_id
+    ~signature_key ~leaf_node ~leaf_key =
   let* () =
     if
       Crypto.signature_key_matches c ~key:signature_key
@@ -318,6 +322,7 @@ let create ?(extensions = []) c ~rng ~group_id ~signature_key ~leaf_node
       pending = String_map.empty;
       own_leaf_keys = [];
       resumption_psks = Int64_map.empty;
+      policy;
     }
 
 (* Pre-shared keys *)
@@ -342,8 +347,9 @@ let resolve_psks ~lookup ~group_id ~current_epoch ~current_psk ~history ids =
 
 (* Joining via Welcome (Section 12.4.3.1) *)
 
-let join ?(psks = no_external_psks) ?tree c ~(key_package : Key_package.t)
-    ~init_key ~encryption_key ~signature_key (welcome : Welcome.t) =
+let join ?(psks = no_external_psks) ?(policy = Policy.default) ?tree c
+    ~(key_package : Key_package.t) ~init_key ~encryption_key ~signature_key
+    (welcome : Welcome.t) =
   let fail msg = Error (Error.Invalid_welcome msg) in
   let suite = Crypto.suite c in
   let* () =
@@ -500,6 +506,7 @@ let join ?(psks = no_external_psks) ?tree c ~(key_package : Key_package.t)
       pending = String_map.empty;
       own_leaf_keys = [];
       resumption_psks = Int64_map.empty;
+      policy;
     }
 
 (* Proposal validation (Sections 12.1 and 12.2) *)
@@ -532,7 +539,8 @@ let validate_proposal t ~tree ~extensions ~sender (p : Proposal.t) =
   in
   match p with
   | Proposal.Add kp ->
-      validate_key_package c ~group_id ~cipher_suite ~tree ~extensions kp
+      validate_key_package ~policy:t.policy c ~group_id ~cipher_suite ~tree
+        ~extensions kp
   | Proposal.Update ln -> (
       match sender with
       | Sender.Member i -> (
@@ -1468,9 +1476,9 @@ let encrypt_application ?(authenticated_data = "") ?(padding = 0) (t : t) ~rng
 (* Joining via an external Commit (Section 12.4.3.2). [leaf_node] provides the
    joiner's credential, capabilities and extensions; its keys are replaced.
    [remove_old] removes a previous appearance of the joiner. *)
-let external_join ?(psks = no_external_psks) ?(authenticated_data = "") ?tree
-    ?remove_old ?(psk_ids = []) c ~rng ~(group_info : Group_info.t)
-    ~signature_key ~(leaf_node : Leaf_node.t) =
+let external_join ?(psks = no_external_psks) ?(policy = Policy.default)
+    ?(authenticated_data = "") ?tree ?remove_old ?(psk_ids = []) c ~rng
+    ~(group_info : Group_info.t) ~signature_key ~(leaf_node : Leaf_node.t) =
   let fail msg = Error (Error.Invalid_group_info msg) in
   let context = group_info.Group_info.group_context in
   let suite = Crypto.suite c in
@@ -1646,4 +1654,5 @@ let external_join ?(psks = no_external_psks) ?(authenticated_data = "") ?tree
         pending = String_map.empty;
         own_leaf_keys = [];
         resumption_psks = Int64_map.empty;
+        policy;
       } )

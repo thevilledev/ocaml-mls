@@ -433,6 +433,83 @@ let test_many_members () =
   in
   same_epoch "after newcomer" final
 
+(* KeyPackage lifetimes are checked against the policy's clock (Section 7.3). *)
+let test_lifetime () =
+  let rng = rng () in
+  let c = Mls.Crypto.create_exn 1 in
+  let now = 1_800_000_000L in
+  let policy =
+    Mls.Policy.make ~clock:(fun () -> now) ~max_lifetime:86_400L ()
+  in
+  let lifetime from until =
+    {
+      Mls.Leaf_node.not_before = Int64.add now from;
+      not_after = Int64.add now until;
+    }
+  in
+  let client ?lifetime name =
+    let sig_key = Mls.Crypto.generate_signature_key c ~rng in
+    let kp =
+      get (name ^ " key package")
+        (KP.generate ?lifetime c ~rng ~signature_key:sig_key
+           ~credential:(Mls.Credential.Basic name))
+    in
+    { name; sig_key; kp }
+  in
+  let alice = client ~lifetime:(lifetime (-60L) 3600L) "alice" in
+  let bob = client ~lifetime:(lifetime (-60L) 3600L) "bob" in
+  let expired = client ~lifetime:(lifetime (-7200L) (-3600L)) "expired" in
+  let future = client ~lifetime:(lifetime 3600L 7200L) "future" in
+  let unbounded = client "unbounded" in
+  let create ?policy () =
+    get "create"
+      (G.create ?policy c ~rng ~group_id:"lifetimes"
+         ~signature_key:alice.sig_key ~leaf_node:alice.kp.key_package.leaf_node
+         ~leaf_key:alice.kp.encryption_key)
+  in
+  let add g who =
+    G.commit ~inline:[ Mls.Proposal.Add who.kp.key_package ] g ~rng
+  in
+  let strict = create ~policy () in
+  ignore (get "current key package" (add strict bob));
+  expect_error "expired key package" (add strict expired);
+  expect_error "key package not yet valid" (add strict future);
+  expect_error "lifetime above the maximum" (add strict unbounded);
+  expect_error "propose expired"
+    (G.propose_add strict ~rng expired.kp.key_package);
+  let validate kp =
+    G.validate_key_package ~policy c ~group_id:"lifetimes" ~cipher_suite:1
+      ~tree:(G.tree strict) ~extensions:[] kp
+  in
+  get "validate current" (validate bob.kp.key_package);
+  expect_error "validate expired" (validate expired.kp.key_package);
+  (* The default policy checks nothing. *)
+  let lax = create () in
+  ignore (get "no clock" (add lax expired));
+  expect_error "with_policy installs the clock"
+    (add (G.with_policy lax policy) expired);
+  (* A member with a clock rejects an Add its sender did not check. *)
+  let r = get "add bob" (add lax bob) in
+  let welcome =
+    match r.welcome with
+    | Some (Mls.Mls_message.Welcome w) -> w
+    | _ -> Alcotest.fail "no welcome"
+  in
+  let b =
+    get "bob join"
+      (G.join ~policy c ~key_package:bob.kp.key_package
+         ~init_key:bob.kp.init_key ~encryption_key:bob.kp.encryption_key
+         ~signature_key:bob.sig_key welcome)
+  in
+  let msg, _ =
+    get "lax propose" (G.propose_add r.state ~rng expired.kp.key_package)
+  in
+  expect_error "receiver rejects expired" (G.process b msg);
+  expect_error "reversed lifetime"
+    (Mls.Policy.check_lifetime policy (lifetime 10L (-10L)));
+  get "default policy"
+    (Mls.Policy.check_lifetime Mls.Policy.default (lifetime 10L (-10L)))
+
 let tests =
   List.map
     (fun suite ->
@@ -440,4 +517,7 @@ let tests =
         (Format.asprintf "%a" Mls.Cipher_suite.pp suite)
         `Quick (scenario suite))
     Mls.Cipher_suite.supported
-  @ [ Alcotest.test_case "nine members" `Quick test_many_members ]
+  @ [
+      Alcotest.test_case "nine members" `Quick test_many_members;
+      Alcotest.test_case "key package lifetimes" `Quick test_lifetime;
+    ]

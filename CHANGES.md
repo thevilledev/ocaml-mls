@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add `Policy`, the application's validation policy, carried by each group
+  and set with `?policy` on `Group.create`, `Group.join`, and
+  `Group.external_join` or replaced with `Group.with_policy`. With a clock it
+  rejects a KeyPackage whose lifetime does not contain the current time, and
+  with `max_lifetime` one whose lifetime is longer than the application
+  accepts (RFC 9420 Section 7.3). The checks apply to KeyPackages the group
+  adds itself and to Add proposals it receives, and `Group.validate_key_package`
+  takes the same `?policy`. The default policy checks nothing, as before.
+
 ## 0.1.0 — 2026-09-18
 
 - Initial implementation of the Messaging Layer Security protocol

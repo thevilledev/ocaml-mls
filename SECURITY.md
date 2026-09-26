@@ -24,7 +24,8 @@ production-ready. It is published for interoperability review.
   nonce generation follows RFC 6979 without additional blinding.
 - X.509 credentials are parsed but not validated; applications must verify
   certificate chains themselves.
-- Lifetime fields of leaf nodes are not checked against a clock.
+- The library has no clock. KeyPackage lifetimes are checked only when the
+  application supplies one, and a maximum lifetime, through `Policy`.
 - ReInit and branch resumption flows are not automated beyond proposal
   processing.
 - Applications own the Delivery Service, message ordering, storage of key

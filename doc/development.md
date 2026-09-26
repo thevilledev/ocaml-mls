@@ -90,7 +90,7 @@ All modules live under `Mls`.
 
 | Area | Modules |
 | --- | --- |
-| Application state machine | `Group` |
+| Application state machine | `Group`, `Policy` |
 | Suite selection and cryptography | `Cipher_suite`, `Crypto` |
 | Identity and member setup | `Credential`, `Capabilities`, `Leaf_node`, `Key_package` |
 | Messages and membership changes | `Mls_message`, `Framing`, `Proposal`, `Commit`, `Update_path`, `Welcome`, `Group_info` |
