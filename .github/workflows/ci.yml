@@ -2,24 +2,24 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            ocaml: "4.14"
-          - os: ubuntu-latest
-            ocaml: "5.4"
-          - os: macos-latest
-            ocaml: "5.4"
-    runs-on: ${{ matrix.os }}
+        # Lowest supported compiler and the latest one.
+        ocaml: ["4.14", "5.4"]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,22 +28,15 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
-      - run: opam install . --deps-only --with-test --with-doc
-      - run: opam exec -- dune build @all @doc
+      - if: matrix.ocaml == '5.4'
+        run: opam lint mls.opam
+      - run: opam install . --deps-only --with-test ${{ matrix.ocaml == '5.4' && '--with-doc' || '' }}
+      - run: opam exec -- dune build @all ${{ matrix.ocaml == '5.4' && '@doc' || '' }}
       - run: opam exec -- dune runtest
-
-  packaging:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "5.4"
-          dune-cache: true
-      - run: opam lint mls.opam
-      - run: opam install . --with-test
+      - if: matrix.ocaml == '5.4'
+        run: |
+          opam exec -- dune build --profile fuzz fuzz/fuzz_mls.exe
+          opam exec -- _build/default/fuzz/fuzz_mls.exe --repeat 2000 --seed 9420
 
   format:
     runs-on: ubuntu-latest
@@ -57,17 +50,3 @@ jobs:
           dune-cache: true
       - run: opam install ocamlformat.0.29.0
       - run: opam exec -- dune build @fmt
-
-  fuzz:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "5.4"
-          dune-cache: true
-      - run: opam install . --deps-only --with-test
-      - run: opam exec -- dune build --profile fuzz fuzz/fuzz_mls.exe
-      - run: opam exec -- _build/default/fuzz/fuzz_mls.exe --repeat 2000 --seed 9420
